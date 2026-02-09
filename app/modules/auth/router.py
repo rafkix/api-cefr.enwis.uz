@@ -83,3 +83,11 @@ async def complete_phone_auth(data: PhoneRegistrationComplete, request: Request,
 async def get_me(current_user: User = Depends(get_current_user)):
     """Joriy foydalanuvchi ma'lumotlarini olish."""
     return current_user
+
+@router.post("/logout")
+async def logout(
+    current_user: User = Depends(get_current_user), 
+    db: AsyncSession = Depends(get_db)
+):
+    """Tizimdan chiqish (Tokenlarni o'chirish yoki shunchaki 200 qaytarish)."""
+    return {"status": "success", "message": "Successfully logged out"}

@@ -1,56 +1,70 @@
 import asyncio
 import os
 import sys
+import random
+from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart, CommandObject, Command
+from aiogram.filters import CommandStart, CommandObject
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from sqlalchemy import select, update, or_, delete
+from sqlalchemy import select, update, and_
 from sqlalchemy.orm import selectinload
 
-# Loyiha root papkasini qo'shish
+# Loyiha root papkasini qo'shish (Pathlarni to'g'irlash)
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.security import hash_password
 
-# ================= MODELLAR =================
+# Modellar
 from app.modules.auth.models import (
-    User, UserProfile, UserContact, 
-    VerificationCode, VerificationPurpose, UserIdentity, UserRole
+    User, UserContact, UserIdentity, VerificationCode, 
+    VerificationPurpose, AuthProvider, UserRole
 )
 
-# ================= FSM (Holatlar) =================
+# ================= KONFIGURATSIYA =================
+REQUIRED_CHANNEL = "@enwis_uz" 
 
+# ================= HOLATLAR (FSM) =================
 class AuthFlow(StatesGroup):
-    waiting_contact_verify = State()
-    waiting_contact_password = State() # Parol uchun kontakt kutish
-    waiting_new_password = State()     # Yangi parolni yozishni kutish
-    waiting_contact_login = State()
+    waiting_contact_login = State()    # Saytga kirish uchun kod kutish
+    waiting_contact_verify = State()   # Telegramni profilga bog'lash
+    waiting_contact_forgot = State()   # Parolni unutganda tiklash
+    waiting_contact_password = State() # Profil ichidan parolni o'zgartirish
+    waiting_new_password = State()     # Yangi parolni yozish jarayoni
 
-# ================= BOT =================
-
+# ================= BOTNI SOZLASH =================
 bot = Bot(
     token=settings.TELEGRAM_BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
 dp = Dispatcher()
 
-# ================= UTILS =================
+# ================= YORDAMCHI FUNKSIYALAR =================
+async def check_subscription(user_id: int) -> bool:
+    """Foydalanuvchi majburiy kanalda borligini tekshirish"""
+    try:
+        member = await bot.get_chat_member(chat_id=REQUIRED_CHANNEL, user_id=user_id)
+        return member.status in ["creator", "administrator", "member"]
+    except Exception:
+        return False
 
 def normalize_phone(phone: str) -> str:
     cleaned = "".join(filter(str.isdigit, phone))
+    if cleaned.startswith("8"): cleaned = "998" + cleaned[1:]
     if not cleaned.startswith("998") and len(cleaned) == 9:
         cleaned = "998" + cleaned
     return f"+{cleaned}"
 
-# ================= KEYBOARDS =================
+def generate_otp() -> str:
+    return "".join([str(random.randint(0, 9)) for _ in range(6)])
 
+# ================= KLAVIATURALAR =================
 def get_main_keyboard():
     kb = [
         [types.KeyboardButton(text="🔑 Parolni o'zgartirish")],
@@ -62,120 +76,223 @@ def get_contact_keyboard():
     kb = [[types.KeyboardButton(text="📱 Kontaktni yuborish", request_contact=True)]]
     return types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True)
 
-# ================= HANDLERS =================
+def get_sub_keyboard(args=None):
+    """Obuna bo'lish tugmalari"""
+    cb_data = f"check_sub:{args}" if args else "check_sub"
+    buttons = [
+        [types.InlineKeyboardButton(text="📢 Kanalga obuna bo'lish", url=f"https://t.me/{REQUIRED_CHANNEL.replace('@', '')}")],
+        [types.InlineKeyboardButton(text="🔄 Obunani tekshirish", callback_data=cb_data)]
+    ]
+    return types.InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# ================= HANDLERLAR =================
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, command: CommandObject, state: FSMContext):
     await state.clear()
     args = command.args
-    
-    if args == "verify_phone":
-        await state.set_state(AuthFlow.waiting_contact_verify)
-        return await message.answer("<tg-emoji emoji-id='5258337316715373336'>🤙</tg-emoji>  Raqamingizni bog'lash uchun kontaktingizni yuboring:", reply_markup=get_contact_keyboard())
 
+    # 1. Obuna tekshiruvi
+    if not await check_subscription(message.from_user.id):
+        return await message.answer(
+            f"👋 <b>Xush kelibsiz!</b>\n\nBot xizmatlaridan foydalanish uchun {REQUIRED_CHANNEL} kanalimizga a'zo bo'lishingiz kerak.",
+            reply_markup=get_sub_keyboard(args)
+        )
+
+    # 2. Parolni unutganlar uchun (t.me/bot?start=forgot_password)
+    if args == "forgot_password":
+        await state.set_state(AuthFlow.waiting_contact_forgot)
+        return await message.answer(
+            "🔐 <b>Parolni tiklash</b>\n\nHisobingizni tasdiqlash uchun pastdagi tugmani bosing:",
+            reply_markup=get_contact_keyboard()
+        )
+
+    # 3. Login uchun kelgan bo'lsa (t.me/bot?start=998...)
     if args and (args.isdigit() or args.startswith("998")):
         phone = normalize_phone(args)
-        await state.set_state(AuthFlow.waiting_contact_login)
         await state.update_data(login_phone=phone)
-        return await message.answer(f"🔐 <b>{phone}</b> uchun kirish kodi olish uchun kontaktingizni yuboring:", reply_markup=get_contact_keyboard())
+        await state.set_state(AuthFlow.waiting_contact_login)
+        return await message.answer(
+            f"🔐 <b>Kirish tizimi</b>\n\n{phone} raqamingizni tasdiqlash uchun kontaktingizni yuboring:",
+            reply_markup=get_contact_keyboard()
+        )
+
+    # 4. Telegramni bog'lash (t.me/bot?start=verify_phone)
+    if args == "verify_phone":
+        await state.set_state(AuthFlow.waiting_contact_verify)
+        return await message.answer(
+            "🔗 <b>Telegramni bog'lash</b>\n\nHisobingizni tasdiqlash uchun kontaktingizni yuboring:",
+            reply_markup=get_contact_keyboard()
+        )
 
     await message.answer(
-        f"<tg-emoji emoji-id='5321095945780209338'>👋</tg-emoji> <b>Assalomu alaykum, {message.from_user.first_name}!</b>\nEnwis One ID tizimiga xush kelibsiz.",
+        f"👋 <b>Assalomu alaykum, {message.from_user.first_name}!</b>\nEnwis Hub xizmatiga xush kelibsiz.",
         reply_markup=get_main_keyboard()
     )
 
-# 1. PROFIL MA'LUMOTLARINI KO'RISH
-@dp.message(F.text == "ℹ️ Profil ma'lumotlari")
-async def show_profile(message: types.Message):
-    async with AsyncSessionLocal() as db:
-        # Telegram orqali user_id ni topish
-        stmt = select(UserIdentity).where(
-            UserIdentity.provider_id == str(message.from_user.id),
-            UserIdentity.provider == "telegram"
-        )
-        identity = (await db.execute(stmt)).scalar_one_or_none()
-
-        if not identity:
-            return await message.answer("❌ Profilingiz topilmadi. Avval saytda Telegramni bog'lang.")
-
-        user_stmt = select(User).options(
-            selectinload(User.profile),
-            selectinload(User.contacts)
-        ).where(User.id == identity.user_id)
+@dp.callback_query(F.data.startswith("check_sub"))
+async def process_check_sub(callback: types.CallbackQuery, state: FSMContext):
+    """Obunani tekshirish tugmasi"""
+    is_sub = await check_subscription(callback.from_user.id)
+    if is_sub:
+        await callback.answer("✅ Rahmat! Obuna tasdiqlandi.")
+        data_parts = callback.data.split(":")
+        args = data_parts[1] if len(data_parts) > 1 else None
         
-        user = (await db.execute(user_stmt)).scalar_one_or_none()
+        await callback.message.delete()
+        fake_command = CommandObject(args=args, command="start")
+        await cmd_start(callback.message, fake_command, state)
+    else:
+        await callback.answer("❌ Siz hali kanalga a'zo emassiz!", show_alert=True)
 
-        if user:
-            contacts = "\n".join([f"• {c.contact_type}: {c.value}" for c in user.contacts])
-            text = (
-                f"👤 <b>Profilingiz:</b>\n\n"
-                f"🆔 ID: <code>{user.id}</code>\n"
-                f"📝 Ism: {user.profile.full_name}\n"
-                f"🏷 Username: @{user.profile.username}\n\n"
-                f"📞 <b>Kontaktlar:</b>\n{contacts}"
-            )
-            await message.answer(text)
-        else:
-            await message.answer("❌ Ma'lumot topilmadi.")
-
-# 2. PAROLNI O'ZGARTIRISH (Boshlash)
-@dp.message(F.text == "🔑 Parolni o'zgartirish")
-async def start_change_password(message: types.Message, state: FSMContext):
-    await state.set_state(AuthFlow.waiting_contact_password)
-    await message.answer("Xavfsizlik yuzasidan kontaktingizni yuboring:", reply_markup=get_contact_keyboard())
-
-@dp.message(AuthFlow.waiting_contact_password, F.contact)
-async def process_password_contact(message: types.Message, state: FSMContext):
+# --- LOGIN PROTSESSI ---
+@dp.message(AuthFlow.waiting_contact_login, F.contact)
+async def process_login_contact(message: types.Message, state: FSMContext):
     if message.contact.user_id != message.from_user.id:
         return await message.answer("❌ Faqat o'z kontaktingizni yuboring.")
 
-    telegram_id = str(message.from_user.id)
+    contact_phone = normalize_phone(message.contact.phone_number)
+    data = await state.get_data()
+    expected_phone = data.get("login_phone")
+
+    if expected_phone and contact_phone != expected_phone:
+        return await message.answer(f"❌ Xato! Siz saytda {expected_phone} raqamini kiritgansiz.")
+
     async with AsyncSessionLocal() as db:
-        stmt = select(UserIdentity).where(
-            UserIdentity.provider_id == telegram_id,
-            UserIdentity.provider == "telegram"
+        stmt = select(UserContact).where(UserContact.value == contact_phone)
+        contact_obj = (await db.execute(stmt)).scalar_one_or_none()
+
+        if not contact_obj:
+            return await message.answer("❌ Bu raqam tizimda topilmadi. Avval ro'yxatdan o'ting.")
+
+        otp_code = generate_otp()
+        new_code = VerificationCode(
+            user_id=contact_obj.user_id,
+            target=contact_phone,
+            code=otp_code,
+            purpose=VerificationPurpose.LOGIN,
+            expires_at=datetime.utcnow() + timedelta(minutes=5),
+            is_used=False
         )
+        db.add(new_code)
+        await db.commit()
+
+        await message.answer(f"✅ Tasdiqlandi!\n\nKirish kodingiz: <code>{otp_code}</code>")
+    await state.clear()
+
+# --- PAROLNI UNUTGANLAR UCHUN ---
+@dp.message(AuthFlow.waiting_contact_forgot, F.contact)
+async def process_forgot_contact(message: types.Message, state: FSMContext):
+    if message.contact.user_id != message.from_user.id: return
+
+    phone = normalize_phone(message.contact.phone_number)
+    async with AsyncSessionLocal() as db:
+        stmt = select(UserContact).where(UserContact.value == phone)
+        contact_obj = (await db.execute(stmt)).scalar_one_or_none()
+
+        if not contact_obj:
+            return await message.answer("❌ Bu raqam tizimda ro'yxatdan o'tmagan.")
+
+        await state.update_data(target_user_id=contact_obj.user_id)
+        await state.set_state(AuthFlow.waiting_new_password)
+        await message.answer("🔓 <b>Hisob tasdiqlandi. Yangi parolingizni kiriting:</b>", reply_markup=types.ReplyKeyboardRemove())
+
+# --- PAROLNI O'ZGARTIRISH (PROFIL ICHIDAN) ---
+@dp.message(F.text == "🔑 Parolni o'zgartirish")
+async def start_change_pw(message: types.Message, state: FSMContext):
+    if not await check_subscription(message.from_user.id):
+        return await message.answer("⚠️ Kanalga obuna bo'lish shart!")
+    
+    await state.set_state(AuthFlow.waiting_contact_password)
+    await message.answer("Xavfsizlik uchun kontaktingizni yuboring:", reply_markup=get_contact_keyboard())
+
+@dp.message(AuthFlow.waiting_contact_password, F.contact)
+async def check_pw_contact(message: types.Message, state: FSMContext):
+    if message.contact.user_id != message.from_user.id: return
+    
+    tg_id = str(message.from_user.id)
+    async with AsyncSessionLocal() as db:
+        stmt = select(UserIdentity).where(UserIdentity.provider_id == tg_id, UserIdentity.provider == AuthProvider.TELEGRAM)
         identity = (await db.execute(stmt)).scalar_one_or_none()
 
         if not identity:
-            return await message.answer("❌ Sizning Telegramingiz tizimga ulanmagan.")
+            return await message.answer("❌ Avval profilingizni bog'lang.")
 
         await state.update_data(target_user_id=identity.user_id)
         await state.set_state(AuthFlow.waiting_new_password)
-        await message.answer("✅ Tasdiqlandi. <b>Yangi parolni kiriting:</b>", reply_markup=types.ReplyKeyboardRemove())
+        await message.answer("🔓 <b>Yangi parolingizni kiriting:</b>", reply_markup=types.ReplyKeyboardRemove())
 
+# --- YANGI PAROLNI SAQLASH ---
 @dp.message(AuthFlow.waiting_new_password)
-async def finish_change_password(message: types.Message, state: FSMContext):
+async def save_new_pw(message: types.Message, state: FSMContext):
     if not message.text or len(message.text) < 6:
-        return await message.answer("⚠️ Parol kamida 6 ta belgidan iborat bo'lishi kerak.")
+        return await message.answer("⚠️ Parol kamida 6 ta belgidan iborat bo'lsin!")
 
     data = await state.get_data()
-    user_id = data.get("target_user_id")
-    hashed_pw = hash_password(message.text[:71])
+    uid = data.get("target_user_id")
+    new_hash = hash_password(message.text[:70])
 
     async with AsyncSessionLocal() as db:
-        # Faqat LOCAL identity (login/parol) ni yangilaymiz
         stmt = update(UserIdentity).where(
-            UserIdentity.user_id == user_id,
-            UserIdentity.provider == "local"
-        ).values(password_hash=hashed_pw)
-        
+            and_(UserIdentity.user_id == uid, UserIdentity.provider == AuthProvider.LOCAL)
+        ).values(password_hash=new_hash)
         await db.execute(stmt)
         await db.commit()
 
-    await message.answer("✅ Parolingiz muvaffaqiyatli yangilandi!", reply_markup=get_main_keyboard())
+    await message.answer("✅ Parol muvaffaqiyatli yangilandi!", reply_markup=get_main_keyboard())
     await state.clear()
 
-# --- VERIFY VA LOGIN HANDLERLARI (Sizda bor edi) ---
+# --- VERIFY PROTSESSI ---
 @dp.message(AuthFlow.waiting_contact_verify, F.contact)
 async def process_verify_contact(message: types.Message, state: FSMContext):
-    # ... (Yuqoridagi kodingizdagi process_verify_contact mantiqi shu yerda qoladi)
-    # Xatolik chiqmasligi uchun qisqartirildi, lekin mantiq o'zgarmaydi
-    pass
+    if message.contact.user_id != message.from_user.id: return
+    contact_phone = normalize_phone(message.contact.phone_number)
+    tg_id = str(message.from_user.id)
 
+    async with AsyncSessionLocal() as db:
+        stmt = select(UserContact).where(UserContact.value == contact_phone)
+        contact_obj = (await db.execute(stmt)).scalar_one_or_none()
+
+        if not contact_obj:
+            return await message.answer("❌ Bu raqam saytda mavjud emas.")
+
+        id_stmt = select(UserIdentity).where(UserIdentity.user_id == contact_obj.user_id, UserIdentity.provider == AuthProvider.TELEGRAM)
+        identity = (await db.execute(id_stmt)).scalar_one_or_none()
+
+        if not identity:
+            db.add(UserIdentity(user_id=contact_obj.user_id, provider=AuthProvider.TELEGRAM, provider_id=tg_id))
+        else:
+            identity.provider_id = tg_id
+        
+        contact_obj.is_verified = True
+        await db.commit()
+        await message.answer("✅ Telegram bog'landi!", reply_markup=get_main_keyboard())
+    await state.clear()
+
+# --- PROFIL MA'LUMOTLARI ---
+@dp.message(F.text == "ℹ️ Profil ma'lumotlari")
+async def show_profile(message: types.Message):
+    if not await check_subscription(message.from_user.id): return
+    tg_id = str(message.from_user.id)
+    async with AsyncSessionLocal() as db:
+        stmt = select(UserIdentity).where(UserIdentity.provider_id == tg_id, UserIdentity.provider == AuthProvider.TELEGRAM)
+        identity = (await db.execute(stmt)).scalar_one_or_none()
+        if not identity:
+            return await message.answer("❌ Profil bog'lanmagan.")
+
+        user_stmt = select(User).options(selectinload(User.profile), selectinload(User.contacts)).where(User.id == identity.user_id)
+        user = (await db.execute(user_stmt)).scalar_one_or_none()
+        if user:
+            contacts = "\n".join([f"• {c.value}" for c in user.contacts])
+            await message.answer(f"👤 <b>Profil:</b> {user.profile.full_name}\n🆔 ID: <code>{user.id}</code>\n📞 Raqamlar:\n{contacts}")
+
+# ================= ASOSIY ISHGA TUSHIRISH =================
 async def main():
-    print(f"🤖 Bot ishga tushdi...")
+    print("🚀 Enwis Auth Bot ishga tushdi...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Bot to'xtatildi")
