@@ -103,7 +103,9 @@ class ReadingSubmitRequest(BaseModel):
 
 class ReadingResultResponse(BaseModel):
     id: int
-    exam_id: str
+    exam_id: str = Field(validation_alias="test_id")
+    correct_answers: int = Field(validation_alias="raw_score")
+    total_questions: int = 35 
     raw_score: int
     standard_score: float
     cefr_level: Optional[str]
@@ -115,9 +117,9 @@ class ReadingResultResponse(BaseModel):
 class ReadingQuestionReview(BaseModel):
     question_number: int
     user_answer: List[str]
-    correct_answer: List[str]
+    correct_answer: List[str] # Bu yerda test_id emas, to'g'ri javoblar ro'yxati
     is_correct: bool
-    type: ReadingQuestionType
+    type: str # Yoki ReadingQuestionType enumi
 
 class ReadingResultDetailResponse(BaseModel):
     summary: ReadingResultResponse
