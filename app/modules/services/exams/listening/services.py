@@ -34,51 +34,40 @@ class ListeningService:
     # ================================================================
     #  SCORING LOGIC (BAHOLASH)
     # ================================================================
-    def _calculate_metrics(self, correct_count: int) -> Tuple[float, str]:
+    def _calculate_listening_metrics(self, correct_count: int) -> Tuple[float, str]:
         """
-        Multilevel-bm.pdf hujjati asosida ball va darajani hisoblash.
-        Manba:  jadvali.
+        Multilevel-bm.pdf hujjati, 35-jadval asosida listening ballini hisoblash.
         Maksimal ball: 75.
         """
-        
-        # 1. Daraja: B1 dan quyi
-        # Manba: To'g'ri javoblar 0-9 -> Ball 0-37 
-        if correct_count <= 9:
-            # 0 dan 9 gacha bo'lgan oraliqni 0 dan 37 gacha bo'lgan ballga proporsional taqsimlash
-            if correct_count == 0:
-                return 0.0, "B1 dan quyi"
-            std_score = (correct_count / 9) * 37
+        # Xatoliklarni oldini olish uchun oraliqni chegaralash
+        count = max(0, min(correct_count, 35)) # Maksimal 35 ta savol 
+
+        # 1. B1 dan quyi darajasi (0-9 ta javob -> 0-37 ball) 
+        if count <= 9:
+            # Proporsional taqsimlash: 0-9 savolni 0-37 ballga o'tkazish
+            std_score = (count / 9) * 37 if count > 0 else 0.0
             return round(std_score, 1), "B1 dan quyi"
-        
-        # 2. Daraja: B1
-        # Manba: To'g'ri javoblar 10-17 -> Ball 38-50 
-        elif 10 <= correct_count <= 17:
-            # Formula: MinBall + (Topgan - MinSavol) * ((MaxBall - MinBall) / (MaxSavol - MinSavol))
-            # (50 - 38) / (17 - 10) = 12 / 7 ≈ 1.71 ball har bir savol uchun ushbu oraliqda
-            std_score = 38 + (correct_count - 10) * ((50 - 38) / (17 - 10))
+
+        # 2. B1 darajasi (10-17 ta javob -> 38-50 ball) 
+        elif 10 <= count <= 17:
+            # Interpolatsiya: 38 ball + (Topilgan - 10) * (Oraliqdagi ball farqi / Oraliqdagi savol farqi)
+            # (50 - 38) / (17 - 10) = 12 / 7 ≈ 1.71 ball har bir savol uchun
+            std_score = 38 + (count - 10) * (12 / 7)
             return round(std_score, 1), "B1"
-        
-        # 3. Daraja: B2
-        # Manba: To'g'ri javoblar 18-27 -> Ball 51-64 
-        elif 18 <= correct_count <= 27:
-            # (64 - 51) / (27 - 18) = 13 / 9 ≈ 1.44 ball har bir savol uchun ushbu oraliqda
-            std_score = 51 + (correct_count - 18) * ((64 - 51) / (27 - 18))
+
+        # 3. B2 darajasi (18-27 ta javob -> 51-64 ball) 
+        elif 18 <= count <= 27:
+            # (64 - 51) / (27 - 18) = 13 / 9 ≈ 1.44 ball har bir savol uchun
+            std_score = 51 + (count - 18) * (13 / 9)
             return round(std_score, 1), "B2"
-            
-        # 4. Daraja: C1
-        # Manba: To'g'ri javoblar 28-35 -> Ball 65-75 
-        # Eslatma: C2 darajasi ko'zda tutilmagan [cite: 23]
-        elif correct_count >= 28:
-            # Hisoblash uchun maksimal savollar sonini 35 deb olamiz (agar foydalanuvchi ko'proq topsa ham)
-            capped_count = min(correct_count, 35)
-            
-            # (75 - 65) / (35 - 28) = 10 / 7 ≈ 1.42 ball har bir savol uchun ushbu oraliqda
-            std_score = 65 + (capped_count - 28) * ((75 - 65) / (35 - 28))
-            
-            # Maksimal ball 75 dan oshmasligi kerak [cite: 24]
+
+        # 4. C1 darajasi (28-35 ta javob -> 65-75 ball) 
+        # Eslatma: C2 darajasi uchun topshiriqlar ko'zda tutilmagan [cite: 23]
+        else: # 28 <= count <= 35
+            # (75 - 65) / (35 - 28) = 10 / 7 ≈ 1.42 ball har bir savol uchun
+            std_score = 65 + (count - 28) * (10 / 7)
+            # Maksimal ball 75 dan oshmasligi kerak 
             return round(min(75.0, std_score), 1), "C1"
-        
-        return 0.0, "Aniqlanmagan"
 
     # ================================================================
     #  HELPERS (Yaratish uchun)

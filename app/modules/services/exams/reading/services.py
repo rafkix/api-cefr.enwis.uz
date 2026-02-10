@@ -38,42 +38,42 @@ class ReadingService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    # ================================================================
-    #  1. BAHOLASH MANTIQI (Multilevel-bm.pdf, 35-jadval asosida)
-    # ================================================================
     def _calculate_metrics(self, correct_count: int) -> Tuple[float, str]:
         """
-        Multilevel mezonlari bo'yicha ballni hisoblash.
-        Maksimal ball: 75[cite: 24].
+        Multilevel mezonlari bo'yicha ballni aniq hisoblash.
+        Asos: Bilimni baholash agentligi metodikasi (2023-yil 16-mart)[cite: 2].
         """
+        correct_count = max(0, min(correct_count, 35)) # Maksimal 35 ta savol 
         
-        # 1. B1 dan quyi (0-9 ta javob -> 0-37 ball) 
-        if correct_count <= 9:
-            if correct_count == 0: return 0.0, "B1 dan quyi"
-            std_score = (correct_count / 9) * 37
-            return round(std_score, 1), "B1 dan quyi"
-
-        # 2. B1 daraja (10-17 ta javob -> 38-50 ball) 
-        elif 10 <= correct_count <= 17:
-            # Interpolatsiya: 38 + (count-10) * ((50-38)/(17-10))
-            std_score = 38 + (correct_count - 10) * (12 / 7)
-            return round(std_score, 1), "B1"
-        
-        # 3. B2 daraja (18-27 ta javob -> 51-64 ball) 
-        elif 18 <= correct_count <= 27:
-            # Interpolatsiya: 51 + (count-18) * ((64-51)/(27-18))
-            std_score = 51 + (correct_count - 18) * (13 / 9)
-            return round(std_score, 1), "B2"
+        # 1. C1 daraja (28-35 ta javob -> 65-75 ball) 
+        if correct_count >= 28:
+            # Oraliq: 65 dan 75 gacha (7 ta qadam, 10 ball farq)
+            std_score = 65 + (correct_count - 28) * (10 / 7)
+            level = "C1"
             
-        # 4. C1 daraja (28-35 ta javob -> 65-75 ball) 
-        elif correct_count >= 28:
-            capped_count = min(correct_count, 35)
-            # Interpolatsiya: 65 + (count-28) * ((75-65)/(35-28))
-            std_score = 65 + (capped_count - 28) * (10 / 7)
-            return round(min(75.0, std_score), 1), "C1"
-        
-        return 0.0, "Aniqlanmagan"
+        # 2. B2 daraja (18-27 ta javob -> 51-64 ball) 
+        elif correct_count >= 18:
+            # Oraliq: 51 dan 64 gacha (9 ta qadam, 13 ball farq)
+            std_score = 51 + (correct_count - 18) * (13 / 9)
+            level = "B2"
+            
+        # 3. B1 daraja (10-17 ta javob -> 38-50 ball) 
+        elif correct_count >= 10:
+            # Oraliq: 38 dan 50 gacha (7 ta qadam, 12 ball farq)
+            std_score = 38 + (correct_count - 10) * (12 / 7)
+            level = "B1"
+            
+        # 4. B1 dan quyi (0-9 ta javob -> 0-37 ball) 
+        else:
+            # Oraliq: 0 dan 37 gacha (9 ta qadam)
+            std_score = (correct_count / 9) * 37 if correct_count > 0 else 0
+            level = "B1 dan quyi"
 
+        # Maksimal ball 75 dan oshmasligi kerak [cite: 24, 25]
+        final_score = round(min(75.0, std_score), 1)
+        
+        return final_score, level
+    
     # ================================================================
     #  2. TESTLARNI BOSHQARISH (CRUD)
     # ================================================================
