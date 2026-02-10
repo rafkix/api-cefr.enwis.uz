@@ -28,21 +28,53 @@ async def update_profile(
     service = USERService(db)
     return await service.update_profile(current_user.id, data)
 
-@router.post("/avatar", response_model=schemas.AvatarUpdateResponse)
+MAX_FILE_SIZE = 10 * 1024 * 1024 
+
+@router.post("/me/avatar", response_model=schemas.AvatarUpdateResponse)
 async def upload_avatar(
     file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Profil rasmini yuklash (Avatar)."""
-    content_type = getattr(file, "content_type", None)
-    if not content_type or not content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Faqat rasm yuklash mumkin")
+    """
+    Foydalanuvchi profil rasmini yuklash (Maksimal 10MB).
+    """
     
-    service = USERService(db)
-    url = await service.upload_avatar(current_user.id, file)
-    return {"avatar_url": url, "message": "Avatar muvaffaqiyatli yuklandi"}
+    # 1. Fayl turini tekshirish
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail="Faqat rasm formatidagi fayllarni yuklash mumkin (jpg, png, webp)."
+        )
 
+    # 2. Fayl hajmini tekshirish (Stream orqali)
+    # Faylni to'liq xotiraga o'qimasdan oldin hajmini tekshirish xavfsizroq
+    file.file.seek(0, 2)  # Fayl oxiriga o'tish
+    file_size = file.file.tell()  # Hajmini o'lchash
+    file.file.seek(0)  # Kursorni yana boshiga qaytarish
+
+    if file_size > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Fayl hajmi juda katta. Maksimal ruxsat etilgan hajm: 10MB"
+        )
+
+    try:
+        service = USERService(db)
+        # S3 yoki Local diskka saqlash mantiqi service ichida
+        avatar_url = await service.upload_avatar(user_id=current_user.id, file=file)
+        
+        return {
+            "avatar_url": avatar_url,
+            "message": "Avatar muvaffaqiyatli yangilandi"
+        }
+    except Exception as e:
+        # Xatolikni logga yozish (ixtiyoriy)
+        print(f"Avatar upload error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Rasmni yuklashda texnik xatolik yuz berdi."
+        )
 # --- KONTAKTLAR (UserContact) ---
 
 @router.get("/contacts", response_model=List[schemas.UserContactResponse])
