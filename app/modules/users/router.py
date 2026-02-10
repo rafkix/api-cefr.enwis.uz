@@ -30,7 +30,7 @@ async def update_profile(
 
 MAX_FILE_SIZE = 10 * 1024 * 1024 
 
-@router.post("/me/avatar", response_model=schemas.AvatarUpdateResponse)
+@router.post("/avatar", response_model=schemas.AvatarUpdateResponse)
 async def upload_avatar(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
