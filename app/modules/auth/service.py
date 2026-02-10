@@ -4,6 +4,7 @@ import hmac
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict
+from sqlalchemy.exc import IntegrityError
 
 from fastapi import HTTPException, Request
 from sqlalchemy import select, delete, or_
@@ -41,6 +42,7 @@ class AuthService:
             stmt = select(User.id).where(User.id == u_id)
             if not (await self.db.execute(stmt)).scalar():
                 return u_id
+
 
     async def _generate_unique_username(self, base_name: Optional[str], user_id: int) -> str:
         if not base_name: 
@@ -90,44 +92,42 @@ class AuthService:
         return Token(access_token=access, refresh_token=refresh, token_type="bearer")
 
     async def register(self, data: RegisterRequest, request: Request) -> Token:
-        """Email orqali ro'yxatdan o'tish va darhol seans ochish."""
-        stmt = select(UserIdentity).where(UserIdentity.provider_id == data.email)
-        if (await self.db.execute(stmt)).scalar():
+        try:
+            uid = await self._generate_user_id()
+            user = User(id=uid, global_role=UserRole.USER)
+            self.db.add(user)
+            await self.db.flush()
+
+            self.db.add(UserProfile(
+                user_id=uid,
+                full_name=data.full_name,
+                username=data.username.lower() if data.username else await self._generate_unique_username(data.full_name, uid)
+            ))
+
+            self.db.add_all([
+                UserContact(user_id=uid, contact_type="email", value=data.email, is_primary=True),
+                UserContact(user_id=uid, contact_type="phone", value=data.phone, is_primary=True)
+            ])
+
+            self.db.add(UserIdentity(
+                user_id=uid,
+                provider=AuthProvider.LOCAL,
+                provider_id=data.email,
+                password_hash=hash_password(data.password)
+            ))
+
+            await self.db.flush()
+
+        except IntegrityError:
+            await self.db.rollback()
             raise HTTPException(400, "Bu email allaqachon ro'yxatdan o'tgan")
 
-        uid = await self._generate_user_id()
-        user = User(id=uid, global_role=UserRole.USER)
-        self.db.add(user)
-        await self.db.flush()
-
-        # Profil yaratish
-        profile = UserProfile(
-            user_id=uid, 
-            full_name=data.full_name, 
-            username=data.username.lower() if data.username else await self._generate_unique_username(data.full_name, uid)
-        )
-        self.db.add(profile)
-
-        # Kontaktlar
-        self.db.add_all([
-            UserContact(user_id=uid, contact_type="email", value=data.email, is_primary=True),
-            UserContact(user_id=uid, contact_type="phone", value=data.phone, is_primary=True)
-        ])
-
-        # Identity (Parol bilan)
-        self.db.add(UserIdentity(
-            user_id=uid, 
-            provider=AuthProvider.LOCAL, 
-            provider_id=data.email, 
-            password_hash=hash_password(data.password)
-        ))
-        
-        await self.db.flush()
         full_user = await self._get_full_user(uid)
         tokens = await self.create_tokens(full_user, request)
-        
+
         await self.db.commit()
         return tokens
+
 
     async def authenticate(self, data: LoginRequest, request: Request) -> Token:
         """Login va parol orqali kirish."""
@@ -171,37 +171,67 @@ class AuthService:
             avatar=data.photo_url
         )
 
-    async def _social_auth_logic(self, provider: AuthProvider, p_id: str, name: str, 
-                                 username_suggestion: Optional[str], request: Request, 
-                                 avatar: Optional[str] = None) -> Token:
-        """Ijtimoiy tarmoqlar orqali kirish mantig'i."""
-        stmt = select(UserIdentity).where(UserIdentity.provider == provider, UserIdentity.provider_id == p_id)
+    async def _social_auth_logic(
+        self,
+        provider: AuthProvider,
+        p_id: str,
+        name: str,
+        username_suggestion: Optional[str],
+        request: Request,
+        avatar: Optional[str] = None
+    ) -> Token:
+
+        stmt = select(UserIdentity).where(
+            UserIdentity.provider == provider,
+            UserIdentity.provider_id == p_id
+        )
         identity = (await self.db.execute(stmt)).scalar_one_or_none()
-        
+
         if identity:
             user = await self._get_full_user(identity.user_id)
             tokens = await self.create_tokens(user, request)
             await self.db.commit()
             return tokens
 
-        # Yangi foydalanuvchi yaratish
-        uid = await self._generate_user_id()
-        user = User(id=uid)
-        self.db.add(user)
-        await self.db.flush()
+        try:
+            uid = await self._generate_user_id()
+            user = User(id=uid)
+            self.db.add(user)
+            await self.db.flush()
 
-        self.db.add(UserProfile(
-            user_id=uid, 
-            full_name=name, 
-            username=await self._generate_unique_username(username_suggestion, uid), 
-            avatar_url=avatar
-        ))
-        self.db.add(UserIdentity(user_id=uid, provider=provider, provider_id=p_id))
-        
-        await self.db.flush()
+            self.db.add(UserProfile(
+                user_id=uid,
+                full_name=name,
+                username=await self._generate_unique_username(username_suggestion, uid),
+                avatar_url=avatar
+            ))
+
+            self.db.add(UserIdentity(
+                user_id=uid,
+                provider=provider,
+                provider_id=p_id
+            ))
+
+            await self.db.flush()
+
+        except IntegrityError:
+            # boshqa request user yaratib ulgurgan
+            await self.db.rollback()
+
+            stmt = select(UserIdentity).where(
+                UserIdentity.provider == provider,
+                UserIdentity.provider_id == p_id
+            )
+            identity = (await self.db.execute(stmt)).scalar_one()
+
+            user = await self._get_full_user(identity.user_id)
+            tokens = await self.create_tokens(user, request)
+            await self.db.commit()
+            return tokens
+
         full_user = await self._get_full_user(uid)
         tokens = await self.create_tokens(full_user, request)
-        
+
         await self.db.commit()
         return tokens
 
