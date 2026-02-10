@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
 
-# Mock Models (Integratsiya uchun)
+# Mock Models
 from app.modules.services.exams.mock.models import (
     MockExamAttempt,
     MockExamResult,
@@ -36,71 +36,29 @@ class ListeningService:
     # ================================================================
     def _calculate_listening_metrics(self, correct_count: int) -> Tuple[float, str]:
         """
-        Multilevel-bm.pdf hujjati, 35-jadval asosida listening ballini hisoblash.
-        Maksimal ball: 75[cite: 24, 30].
+        Multilevel-bm.pdf hujjati, 35-jadval asosida listening ballini hisoblash. 
         """
         count = max(0, min(correct_count, 35)) # Maksimal 35 ta savol 
 
-        # 1. B1 dan quyi darajasi (0-9 ta javob -> 0-37 ball) 
+        # B1 dan quyi (0-9 ta javob -> 0-37 ball) 
         if count <= 9:
             std_score = (count / 9) * 37 if count > 0 else 0.0
             return round(std_score, 1), "B1 dan quyi"
 
-        # 2. B1 darajasi (10-17 ta javob -> 38-50 ball) 
+        # B1 darajasi (10-17 ta javob -> 38-50 ball) [cite: 17, 20, 35]
         elif 10 <= count <= 17:
-            # Interpolatsiya: 38 ball + (Topilgan - 10) * (12/7)
             std_score = 38 + (count - 10) * (12 / 7)
             return round(std_score, 1), "B1"
 
-        # 3. B2 darajasi (18-27 ta javob -> 51-64 ball) 
+        # B2 darajasi (18-27 ta javob -> 51-64 ball) [cite: 20, 21, 35]
         elif 18 <= count <= 27:
-            # Interpolatsiya: 51 ball + (Topilgan - 18) * (13/9)
             std_score = 51 + (count - 18) * (13 / 9)
             return round(std_score, 1), "B2"
 
-        # 4. C1 darajasi (28-35 ta javob -> 65-75 ball) 
+        # C1 darajasi (28-35 ta javob -> 65-75 ball) [cite: 21, 24, 35]
         else:
-            # Interpolatsiya: 65 ball + (Topilgan - 28) * (10/7)
             std_score = 65 + (count - 28) * (10 / 7)
             return round(min(75.0, std_score), 1), "C1"
-
-    # ================================================================
-    #  HELPERS (Yaratish uchun)
-    # ================================================================
-    async def _create_structure(self, exam_id: str, parts_data: List[Any]):
-        for p_data in parts_data:
-            new_part = ListeningPart(
-                exam_id=exam_id,
-                part_number=p_data.part_number,
-                title=p_data.title,
-                instruction=p_data.instruction,
-                task_type=p_data.task_type,
-                audio_url=p_data.audio_url, 
-                context=p_data.context,
-                passage=p_data.passage,
-                map_image=p_data.map_image
-            )
-            self.db.add(new_part)
-            await self.db.flush()
-
-            if p_data.options:
-                for opt in p_data.options:
-                    self.db.add(ListeningPartOption(part_id=new_part.id, value=opt.value, label=opt.label))
-
-            for q_data in p_data.questions:
-                new_q = ListeningQuestion(
-                    part_id=new_part.id,
-                    question_number=q_data.question_number,
-                    type=q_data.type,
-                    text=q_data.text, 
-                    correct_answer=q_data.correct_answer
-                )
-                self.db.add(new_q)
-                await self.db.flush()
-
-                if q_data.options:
-                    for opt in q_data.options:
-                        self.db.add(ListeningQuestionOption(question_id=new_q.id, value=opt.value, label=opt.label))
 
     # ================================================================
     #  CRUD METHODS
@@ -127,49 +85,22 @@ class ListeningService:
             return await self.get_exam_by_id(new_exam.id)
         except Exception as e:
             await self.db.rollback()
-            logger.error(f"Exam creation error: {e}")
+            logger.error(f"Listening imtihonini yaratishda xatolik: {e}")
             raise HTTPException(400, detail=f"Xatolik: {str(e)}")
 
-    async def get_all_exams(self):
-        stmt = select(ListeningExam).order_by(ListeningExam.created_at.desc())
-        result = await self.db.execute(stmt)
-        return result.scalars().all()
-
     async def get_exam_by_id(self, exam_id: str):
-        stmt = select(ListeningExam).where(ListeningExam.id == exam_id).options(
-            selectinload(ListeningExam.parts).options(
-                selectinload(ListeningPart.questions).selectinload(ListeningQuestion.options),
-                selectinload(ListeningPart.options)
+        stmt = (
+            select(ListeningExam)
+            .where(ListeningExam.id == exam_id)
+            .options(
+                selectinload(ListeningExam.parts).options(
+                    selectinload(ListeningPart.questions).selectinload(ListeningQuestion.options),
+                    selectinload(ListeningPart.options)
+                )
             )
         )
         res = await self.db.execute(stmt)
         return res.unique().scalar_one_or_none()
-
-    async def update_exam(self, exam_id: str, data: ListeningExamUpdate):
-        exam = await self.db.get(ListeningExam, exam_id)
-        if not exam:
-            raise HTTPException(404, detail="Imtihon topilmadi")
-
-        update_data = data.model_dump(exclude_unset=True)
-        for key, value in update_data.items():
-            if key != "parts":
-                setattr(exam, key, value)
-
-        if data.parts:
-            await self.db.execute(delete(ListeningPart).where(ListeningPart.exam_id == exam_id))
-            await self.db.flush()
-            await self._create_structure(exam.id, data.parts)
-
-        await self.db.commit()
-        return await self.get_exam_by_id(exam_id)
-
-    async def delete_exam(self, exam_id: str):
-        exam = await self.db.get(ListeningExam, exam_id)
-        if not exam:
-            return False
-        await self.db.delete(exam)
-        await self.db.commit()
-        return True
 
     # ================================================================
     #  RESULTS & SUBMISSION
@@ -184,7 +115,6 @@ class ListeningService:
         for part in exam.parts:
             for q in part.questions:
                 total_q += 1
-                # User javobini string formatida olish
                 user_ans = data.user_answers.get(str(q.id), "").strip().lower()
                 correct_ans_list = [a.strip().lower() for a in q.correct_answer.split("/")]
                 
@@ -200,7 +130,7 @@ class ListeningService:
                     "type": q.type
                 })
 
-        # To'g'rilangan metod nomi
+        # Xatolik tuzatildi: _calculate_listening_metrics chaqirilmoqda
         std_score, cefr_level = self._calculate_listening_metrics(correct_count)
         
         new_result = ListeningResult(
@@ -225,41 +155,91 @@ class ListeningService:
         
         return {"summary": new_result, "review": review_items}
 
+    async def get_result_with_review(self, result_id: int, user_id: int):
+        """
+        Logdagi AttributeError xatosini tuzatuvchi asosiy metod.
+        Natija va uning batafsil tahlilini qaytaradi.
+        """
+        stmt = select(ListeningResult).where(
+            ListeningResult.id == result_id, 
+            ListeningResult.user_id == user_id
+        )
+        res = await self.db.execute(stmt)
+        result_data = res.scalar_one_or_none()
+        
+        if not result_data:
+            return None 
+
+        exam = await self.get_exam_by_id(result_data.exam_id)
+        if not exam:
+            return None
+        
+        review_data = []
+        for part in exam.parts:
+            for q in part.questions:
+                u_ans = result_data.user_answers.get(str(q.id), "").strip().lower()
+                valid_options = [a.strip().lower() for a in q.correct_answer.split("/")]
+                
+                is_correct = u_ans in valid_options
+                
+                review_data.append({
+                    "question_id": q.id,
+                    "question_number": q.question_number,
+                    "user_answer": result_data.user_answers.get(str(q.id), ""),
+                    "correct_answer": q.correct_answer,
+                    "is_correct": is_correct,
+                    "type": q.type
+                })
+                
+        return {
+            "summary": result_data,
+            "review": review_data
+        }
+
     # ================================================================
-    #  MOCK EXAM INTEGRATION
+    #  INTERNAL HELPERS (Struktura va Mock integratsiya)
     # ================================================================
+    async def _create_structure(self, exam_id: str, parts_data: List[Any]):
+        for p_data in parts_data:
+            new_part = ListeningPart(
+                exam_id=exam_id, part_number=p_data.part_number,
+                title=p_data.title, instruction=p_data.instruction,
+                task_type=p_data.task_type, audio_url=p_data.audio_url
+            )
+            self.db.add(new_part)
+            await self.db.flush()
+
+            for q_data in p_data.questions:
+                new_q = ListeningQuestion(
+                    part_id=new_part.id, question_number=q_data.question_number,
+                    type=q_data.type, text=q_data.text, correct_answer=q_data.correct_answer
+                )
+                self.db.add(new_q)
+                await self.db.flush()
+                if q_data.options:
+                    for opt in q_data.options:
+                        self.db.add(ListeningQuestionOption(question_id=new_q.id, value=opt.value, label=opt.label))
+
     async def _update_mock_listening(self, exam_attempt_id: int, score: float, cefr_level: str):
         stmt = select(MockSkillAttempt).where(
             MockSkillAttempt.attempt_id == exam_attempt_id,
             MockSkillAttempt.skill == SkillType.LISTENING,
         )
-        res = await self.db.execute(stmt)
-        skill = res.scalar_one_or_none()
-        
+        skill = (await self.db.execute(stmt)).scalar_one_or_none()
         if skill:
-            skill.score = score
-            skill.cefr_level = cefr_level
-            skill.is_checked = True
+            skill.score, skill.cefr_level, skill.is_checked = score, cefr_level, True
             skill.submitted_at = datetime.now(timezone.utc)
             await self.db.flush()
             await self._try_finish_mock_exam(exam_attempt_id)
 
     async def _try_finish_mock_exam(self, exam_attempt_id: int):
         stmt = select(MockSkillAttempt).where(MockSkillAttempt.attempt_id == exam_attempt_id)
-        res = await self.db.execute(stmt)
-        skills = res.scalars().all()
+        skills = (await self.db.execute(stmt)).scalars().all()
 
         if len(skills) == 4 and all(s.is_checked for s in skills):
-            # Skillarni ajratib olish
-            skill_map = {s.skill: s for s in skills}
-            r = skill_map.get(SkillType.READING)
-            l = skill_map.get(SkillType.LISTENING)
-            w = skill_map.get(SkillType.WRITING)
-            sp = skill_map.get(SkillType.SPEAKING)
-
-            overall = round((r.score + l.score + w.score + sp.score) / 4, 2)
+            s_map = {s.skill: s for s in skills}
+            overall = round(sum(s.score for s in skills) / 4, 2)
             
-            # Yakuniy CEFR darajasi (Multilevel shkalasi asosida) 
             final_cefr = "B1 dan quyi"
             if overall >= 65: final_cefr = "C1"
             elif overall >= 51: final_cefr = "B2"
@@ -267,16 +247,12 @@ class ListeningService:
 
             self.db.add(MockExamResult(
                 attempt_id=exam_attempt_id,
-                reading_score=r.score,
-                listening_score=l.score,
-                writing_score=w.score,
-                speaking_score=sp.score,
-                overall_score=overall,
-                cefr_level=final_cefr,
-                passed=overall >= 38, # B1 minimal o'tish balli [cite: 17, 35]
+                reading_score=s_map[SkillType.READING].score,
+                listening_score=s_map[SkillType.LISTENING].score,
+                writing_score=s_map[SkillType.WRITING].score,
+                speaking_score=s_map[SkillType.SPEAKING].score,
+                overall_score=overall, cefr_level=final_cefr, passed=overall >= 38
             ))
-
             attempt = await self.db.get(MockExamAttempt, exam_attempt_id)
             if attempt:
-                attempt.is_finished = True
-                attempt.finished_at = datetime.now(timezone.utc)
+                attempt.is_finished, attempt.finished_at = True, datetime.now(timezone.utc)
