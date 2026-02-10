@@ -103,9 +103,11 @@ class ReadingSubmitRequest(BaseModel):
 
 class ReadingResultResponse(BaseModel):
     id: int
+    exam_id: str
     raw_score: int
+    standard_score: float
+    cefr_level: Optional[str]
     percentage: float
-    cefr_level: str
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
