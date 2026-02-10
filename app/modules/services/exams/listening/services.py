@@ -1,5 +1,5 @@
 import logging
-from typing import List, Any, Tuple, Optional
+from typing import List, Any, Tuple, Optional, Dict
 from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
@@ -37,36 +37,31 @@ class ListeningService:
     def _calculate_listening_metrics(self, correct_count: int) -> Tuple[float, str]:
         """
         Multilevel-bm.pdf hujjati, 35-jadval asosida listening ballini hisoblash.
-        Maksimal ball: 75.
+        Maksimal ball: 75[cite: 24, 30].
         """
-        # Xatoliklarni oldini olish uchun oraliqni chegaralash
         count = max(0, min(correct_count, 35)) # Maksimal 35 ta savol 
 
         # 1. B1 dan quyi darajasi (0-9 ta javob -> 0-37 ball) 
         if count <= 9:
-            # Proporsional taqsimlash: 0-9 savolni 0-37 ballga o'tkazish
             std_score = (count / 9) * 37 if count > 0 else 0.0
             return round(std_score, 1), "B1 dan quyi"
 
         # 2. B1 darajasi (10-17 ta javob -> 38-50 ball) 
         elif 10 <= count <= 17:
-            # Interpolatsiya: 38 ball + (Topilgan - 10) * (Oraliqdagi ball farqi / Oraliqdagi savol farqi)
-            # (50 - 38) / (17 - 10) = 12 / 7 ≈ 1.71 ball har bir savol uchun
+            # Interpolatsiya: 38 ball + (Topilgan - 10) * (12/7)
             std_score = 38 + (count - 10) * (12 / 7)
             return round(std_score, 1), "B1"
 
         # 3. B2 darajasi (18-27 ta javob -> 51-64 ball) 
         elif 18 <= count <= 27:
-            # (64 - 51) / (27 - 18) = 13 / 9 ≈ 1.44 ball har bir savol uchun
+            # Interpolatsiya: 51 ball + (Topilgan - 18) * (13/9)
             std_score = 51 + (count - 18) * (13 / 9)
             return round(std_score, 1), "B2"
 
         # 4. C1 darajasi (28-35 ta javob -> 65-75 ball) 
-        # Eslatma: C2 darajasi uchun topshiriqlar ko'zda tutilmagan [cite: 23]
-        else: # 28 <= count <= 35
-            # (75 - 65) / (35 - 28) = 10 / 7 ≈ 1.42 ball har bir savol uchun
+        else:
+            # Interpolatsiya: 65 ball + (Topilgan - 28) * (10/7)
             std_score = 65 + (count - 28) * (10 / 7)
-            # Maksimal ball 75 dan oshmasligi kerak 
             return round(min(75.0, std_score), 1), "C1"
 
     # ================================================================
@@ -132,6 +127,7 @@ class ListeningService:
             return await self.get_exam_by_id(new_exam.id)
         except Exception as e:
             await self.db.rollback()
+            logger.error(f"Exam creation error: {e}")
             raise HTTPException(400, detail=f"Xatolik: {str(e)}")
 
     async def get_all_exams(self):
@@ -188,6 +184,7 @@ class ListeningService:
         for part in exam.parts:
             for q in part.questions:
                 total_q += 1
+                # User javobini string formatida olish
                 user_ans = data.user_answers.get(str(q.id), "").strip().lower()
                 correct_ans_list = [a.strip().lower() for a in q.correct_answer.split("/")]
                 
@@ -203,7 +200,8 @@ class ListeningService:
                     "type": q.type
                 })
 
-        std_score, cefr_level = self._calculate_metrics(correct_count)
+        # To'g'rilangan metod nomi
+        std_score, cefr_level = self._calculate_listening_metrics(correct_count)
         
         new_result = ListeningResult(
             user_id=user_id,
@@ -217,9 +215,8 @@ class ListeningService:
         )
         
         self.db.add(new_result)
-        await self.db.flush() # ID olish uchun flush
+        await self.db.flush()
 
-        # MOCK INTEGRATION: Agar bu Mock bo'lsa, statusni yangilaymiz
         if data.exam_attempt_id:
             await self._update_mock_listening(data.exam_attempt_id, std_score, cefr_level)
 
@@ -228,94 +225,45 @@ class ListeningService:
         
         return {"summary": new_result, "review": review_items}
 
-    async def get_user_results(self, user_id: int):
-        stmt = (
-            select(ListeningResult)
-            .where(ListeningResult.user_id == user_id)
-            .order_by(ListeningResult.created_at.desc())
-        )
-        result = await self.db.execute(stmt)
-        return result.scalars().all()
-    
-    async def get_result_with_review(self, result_id: int, user_id: int):
-        stmt = select(ListeningResult).where(
-            ListeningResult.id == result_id, 
-            ListeningResult.user_id == user_id
-        )
-        res = await self.db.execute(stmt)
-        result_data = res.scalar_one_or_none()
-        
-        if not result_data:
-            return None 
-
-        exam = await self.get_exam_by_id(result_data.exam_id)
-        if not exam:
-            return None
-        
-        review_data = []
-        for part in exam.parts:
-            for q in part.questions:
-                u_ans = result_data.user_answers.get(str(q.id), "").strip().lower()
-                c_ans_raw = q.correct_answer.strip().lower()
-                valid_options = [a.strip() for a in c_ans_raw.split("/")]
-                
-                is_correct = u_ans in valid_options
-                
-                review_data.append({
-                    "question_number": q.question_number,
-                    "user_answer": result_data.user_answers.get(str(q.id), ""),
-                    "correct_answer": q.correct_answer,
-                    "is_correct": is_correct,
-                    "type": q.type
-                })
-                
-        return {
-            "summary": result_data,
-            "review": review_data
-        }
-
     # ================================================================
-    #  MOCK EXAM INTEGRATION (INTERNAL)
+    #  MOCK EXAM INTEGRATION
     # ================================================================
     async def _update_mock_listening(self, exam_attempt_id: int, score: float, cefr_level: str):
-        """Mock imtihonning Listening qismini yangilash"""
         stmt = select(MockSkillAttempt).where(
             MockSkillAttempt.attempt_id == exam_attempt_id,
             MockSkillAttempt.skill == SkillType.LISTENING,
         )
-        skill = (await self.db.execute(stmt)).scalar_one_or_none()
+        res = await self.db.execute(stmt)
+        skill = res.scalar_one_or_none()
+        
         if skill:
             skill.score = score
             skill.cefr_level = cefr_level
             skill.is_checked = True
             skill.submitted_at = datetime.now(timezone.utc)
             await self.db.flush()
-            # Barcha skillar tugaganini tekshirish
             await self._try_finish_mock_exam(exam_attempt_id)
 
     async def _try_finish_mock_exam(self, exam_attempt_id: int):
-        """Barcha 4 skill topshirilgan bo'lsa Mockni yakunlash"""
         stmt = select(MockSkillAttempt).where(MockSkillAttempt.attempt_id == exam_attempt_id)
-        skills = (await self.db.execute(stmt)).scalars().all()
+        res = await self.db.execute(stmt)
+        skills = res.scalars().all()
 
-        # Agar 4 ta skill ham tekshirib bo'lingan bo'lsa
         if len(skills) == 4 and all(s.is_checked for s in skills):
-            r = next(s for s in skills if s.skill == SkillType.READING)
-            l = next(s for s in skills if s.skill == SkillType.LISTENING)
-            w = next(s for s in skills if s.skill == SkillType.WRITING)
-            sp = next(s for s in skills if s.skill == SkillType.SPEAKING)
+            # Skillarni ajratib olish
+            skill_map = {s.skill: s for s in skills}
+            r = skill_map.get(SkillType.READING)
+            l = skill_map.get(SkillType.LISTENING)
+            w = skill_map.get(SkillType.WRITING)
+            sp = skill_map.get(SkillType.SPEAKING)
 
             overall = round((r.score + l.score + w.score + sp.score) / 4, 2)
             
-            # O'rtacha ballni CEFR ga o'tkazish (Taxminiy hisob)
-            # Source 35: B1 (38-50), B2 (51-64), C1 (65-75)
+            # Yakuniy CEFR darajasi (Multilevel shkalasi asosida) 
             final_cefr = "B1 dan quyi"
-            if overall >= 65:
-                final_cefr = "C1"
-            elif overall >= 51:
-                final_cefr = "B2"
-            elif overall >= 38:
-                final_cefr = "B1"
+            if overall >= 65: final_cefr = "C1"
+            elif overall >= 51: final_cefr = "B2"
+            elif overall >= 38: final_cefr = "B1"
 
             self.db.add(MockExamResult(
                 attempt_id=exam_attempt_id,
@@ -325,7 +273,7 @@ class ListeningService:
                 speaking_score=sp.score,
                 overall_score=overall,
                 cefr_level=final_cefr,
-                passed=overall >= 38, # B1 dan yuqori bo'lsa o'tgan hisoblanadi 
+                passed=overall >= 38, # B1 minimal o'tish balli [cite: 17, 35]
             ))
 
             attempt = await self.db.get(MockExamAttempt, exam_attempt_id)
