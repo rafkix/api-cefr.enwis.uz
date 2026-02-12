@@ -38,31 +38,31 @@ class USERService:
         return list(result.scalars().all())
 
     # --- CREATE (Contact & Avatar) ---
-    # Backend (API qismi)
     async def add_contact_start(self, user_id: int, value: str, contact_type: str):
-        # 1. Avval mavjudligini tekshirish
+        # BU YERDA: VerificationCode jadvalida 'purpose' enum bo'lsa, 
+        # uning qiymati to'g'ri ekanligini tekshiring
+        
         existing = await self.db.execute(select(UserContact).where(UserContact.value == value))
         if existing.scalar_one_or_none():
-            # Bu yerda detail='...' deb yuboring, FastAPI detail kutadi
-            raise HTTPException(400, detail="Bu kontakt allaqachon mavjud")
+            raise HTTPException(400, "Bu kontakt allaqachon mavjud")
 
         code = str(secrets.randbelow(900000) + 100000)
         
-        # Eskilarini o'chirish
+        # Eskilarini to'g'ri o'chirish (target = value bo'yicha)
         await self.db.execute(delete(VerificationCode).where(VerificationCode.target == value))
         
-        # Yangi kodni saqlash
-        self.db.add(VerificationCode(
+        new_verification = VerificationCode(
             target=value, 
             code=code, 
-            purpose=VerificationPurpose.ADD_CONTACT,
+            purpose=VerificationPurpose.ADD_CONTACT, # Enum to'g'riligini tekshiring
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)
-        ))
+        )
         
+        self.db.add(new_verification)
         await self.db.commit()
-        # Frontendda toast ko'rinishi uchun
-        return {"status": "success", "message": "Kod yuborildi"}
-
+        return {"message": "Kod yuborildi", "debug_code": code}
+    
+    
     async def add_contact_verify(self, user_id: int, value: str, code: str, contact_type: str):
         stmt = select(VerificationCode).where(
             VerificationCode.target == value, VerificationCode.code == code, VerificationCode.is_used == False

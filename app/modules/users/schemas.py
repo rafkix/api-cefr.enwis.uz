@@ -132,6 +132,10 @@ class ContactUpdateRequest(BaseModel):
 class AddContactRequest(BaseModel):
     value: str # Email yoki Telefon
     type: str  # "phone" yoki "email"
+    
+class AddContactSchema(BaseModel):
+    type: str
+    value: str
 
 class AddContactVerify(BaseModel):
     value: str

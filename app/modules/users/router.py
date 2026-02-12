@@ -44,14 +44,18 @@ async def create_avatar(
 
 # --- SECTION: CONTACTS ---
 
-@router.post("/contacts", status_code=status.HTTP_201_CREATED)
-async def create_contact_request(
-    data: schemas.AddContactRequest,
-    user: User = Depends(get_current_user),
-    service: USERService = Depends(get_service)
+@router.post("/me/contacts")
+async def add_contact_start_api(
+    payload: schemas.AddContactSchema, 
+    user_id: int = Depends(get_current_user_id), # Token orqali user_id
+    db_service: UserService = Depends(get_user_service)
 ):
-    """Yangi kontakt qo'shish (OTP yuborish)."""
-    return await service.add_contact_start(user.id, data.value, data.type)
+    # Payload ichidan ma'lumotlarni olamiz
+    return await db_service.add_contact_start(
+        user_id=user_id, 
+        value=payload.value, 
+        contact_type=payload.type
+    )
 
 @router.post("/contacts/verify")
 async def verify_contact_creation(
