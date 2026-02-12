@@ -15,20 +15,76 @@ router = Router()
 
 @router.message(AuthFlow.waiting_contact_login, F.contact)
 async def process_login_contact(message: types.Message, state: FSMContext):
+    # 1. Kontakt haqqoniyligini tekshirish
     if message.contact.user_id != message.from_user.id:
         return await message.answer("❌ Faqat o'z kontaktingizni yuboring.")
 
     phone = normalize_phone(message.contact.phone_number)
-    async with AsyncSessionLocal() as db:
-        stmt = select(UserContact).where(UserContact.value == phone)
-        contact = (await db.execute(stmt)).scalar_one_or_none()
-        if not contact: return await message.answer("❌ Bu raqam ro'yxatda yo'q.")
+    state_data = await state.get_data()
+    external_uid = state_data.get("external_user_id")
 
+    async with AsyncSessionLocal() as db:
+        # 2. Foydalanuvchini aniqlash
+        user = None
+        if external_uid and external_uid.isdigit():
+            # Agar deep-linkdan ID kelgan bo'lsa (Google user yoki profilni tahrirlash)
+            stmt = select(User).where(User.id == int(external_uid))
+            user = (await db.execute(stmt)).scalar_one_or_none()
+        
+        if not user:
+            # Agar ID kelmagan bo'lsa, raqam orqali qidiramiz
+            stmt = select(UserContact).where(UserContact.value == phone).options(selectinload(UserContact.user))
+            contact_record = (await db.execute(stmt)).scalar_one_or_none()
+            if contact_record:
+                user = contact_record.user
+
+        # 3. Agar foydalanuvchi hali ham topilmasa
+        if not user:
+            return await message.answer("❌ Foydalanuvchi topilmadi. Avval saytdan ro'yxatdan o'ting.")
+
+        # 4. Raqamni foydalanuvchiga bog'lash (Contact qo'shish yoki yangilash)
+        # Avval bu raqam ushbu foydalanuvchida bor-yo'qligini tekshiramiz
+        stmt_check = select(UserContact).where(
+            and_(UserContact.user_id == user.id, UserContact.value == phone)
+        )
+        existing_contact = (await db.execute(stmt_check)).scalar_one_or_none()
+
+        if not existing_contact:
+            # Agar raqam foydalanuvchiga biriktirilmagan bo'lsa, yangi kontakt qo'shamiz
+            new_contact = UserContact(
+                user_id=user.id,
+                contact_type='phone',
+                value=phone,
+                is_verified=False  # Hali OTP kiritilmagan
+            )
+            db.add(new_contact)
+            await db.flush() # ID ni olish uchun lekin commit qilmasdan
+        
+        # 5. OTP yaratish va saqlash
         otp = generate_otp()
-        db.add(VerificationCode(user_id=contact.user_id, target=phone, code=otp, purpose=VerificationPurpose.LOGIN, 
-                                expires_at=datetime.utcnow() + timedelta(minutes=5)))
+        
+        # Maqsadni aniqlash
+        purpose = VerificationPurpose.ADD_CONTACT if external_uid else VerificationPurpose.LOGIN
+        
+        db.add(VerificationCode(
+            user_id=user.id,
+            target=phone,
+            code=otp,
+            purpose=purpose,
+            expires_at=datetime.utcnow() + timedelta(minutes=5)
+        ))
+        
         await db.commit()
-        await message.answer(f"✅ Kirish kodingiz: <code>{otp}</code>")
+
+        # 6. Foydalanuvchiga javob yuborish
+        response_text = (
+            f"✅ <b>Raqam qabul qilindi!</b>\n\n"
+            f"Sizning tasdiqlash kodingiz: <code>{otp}</code>\n\n"
+            f"Ushbu kodni saytga kiriting. Kod 5 daqiqa davomida amal qiladi."
+        )
+        
+        await message.answer(response_text, parse_mode="HTML", reply_markup=get_main_keyboard())
+
     await state.clear()
 
 @router.message(F.text == "🔑 Parolni o'zgartirish")
