@@ -47,7 +47,7 @@ async def create_avatar(
 @router.post("/me/contacts")
 async def add_contact_start_api(
     payload: schemas.AddContactSchema, 
-    user_id: int = Depends(get_current_user_id), # Token orqali user_id
+    user_id: int = Depends(get_current_user), # Token orqali user_id
     db_service: UserService = Depends(get_user_service)
 ):
     # Payload ichidan ma'lumotlarni olamiz
