@@ -128,3 +128,22 @@ class ContactUpdateRequest(BaseModel):
     contact_type: str  # "email", "phone"
     new_value: str
     verification_code: Optional[str] = None
+
+class AddContactRequest(BaseModel):
+    value: str # Email yoki Telefon
+    type: str  # "phone" yoki "email"
+
+class AddContactVerify(BaseModel):
+    value: str
+    code: str
+    type: str
+
+class ContactResponse(BaseModel):
+    id: int
+    value: str
+    contact_type: str
+    is_primary: bool
+    is_verified: bool
+
+    class Config:
+        from_attributes = True

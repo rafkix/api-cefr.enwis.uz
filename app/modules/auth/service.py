@@ -280,6 +280,45 @@ class AuthService:
         await self.db.commit()
         return {"method": "sms" if target.startswith("+") else "email", "debug_code": code}
 
+    async def add_phone_to_social_account(self, user_id: int, phone: str) -> Dict:
+        """Social login orqali kirgan foydalanuvchiga telefon raqami biriktirish."""
+        
+        # 1. Raqam bandligini tekshirish
+        stmt = select(UserContact).where(
+            UserContact.value == phone,
+            UserContact.contact_type == "phone"
+        )
+        existing_contact = (await self.db.execute(stmt)).scalar_one_or_none()
+        
+        if existing_contact:
+            # Agar raqam boshqa birovga tegishli bo'lsa xato beramiz
+            if existing_contact.user_id != user_id:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="Bu telefon raqami boshqa foydalanuvchiga biriktirilgan"
+                )
+            # Agar o'zining raqami bo'lsa, shunchaki muvaffaqiyat qaytaramiz
+            return {"status": "success", "message": "Raqam allaqachon biriktirilgan"}
+
+        try:
+            async with self.db.begin_nested():
+                # 2. Yangi kontakt qo'shish
+                new_contact = UserContact(
+                    user_id=user_id,
+                    contact_type="phone",
+                    value=phone,
+                    is_primary=True  # Bu foydalanuvchining asosiy raqami bo'ladi
+                )
+                self.db.add(new_contact)
+                await self.db.flush()
+            
+            await self.db.commit()
+            return {"status": "success", "message": "Telefon raqami muvaffaqiyatli saqlandi"}
+
+        except IntegrityError:
+            await self.db.rollback()
+            raise HTTPException(400, "Xatolik yuz berdi, iltimos qaytadan urinib ko'ring")
+    
     async def logout(self, user_id: int, request: Request):
         ip = request.client.host if request.client else "unknown"
         ua = request.headers.get("user-agent", "unknown")[:255]
