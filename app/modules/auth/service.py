@@ -207,7 +207,6 @@ class AuthService:
 
                 # --- MUHIM JOYI: Kontaktlarga saqlash ---
                 if email:
-                    from your_app.models import UserContact # Model nomiga qarang
                     self.db.add(UserContact(
                         user_id=uid,
                         contact_type="email",
