@@ -57,7 +57,7 @@ async def cmd_start(message: types.Message, command: CommandObject, state: FSMCo
 
         # D. Oddiy tasdiqlash so'rovi (agar raqamsiz kelsa)
         if args == "verify_phone":
-            await state.set_state(AuthFlow.waiting_contact_login)
+            await state.set_state(AuthFlow.waiting_contact_verify)
             return await message.answer(
                 "📱 Telefon raqamingizni tasdiqlash uchun pastdagi tugma orqali kontaktingizni yuboring:", 
                 reply_markup=get_contact_keyboard()
@@ -69,6 +69,8 @@ async def cmd_start(message: types.Message, command: CommandObject, state: FSMCo
         "Profilingizni tasdiqlash yoki boshqarish uchun saytimizdan foydalaning.", 
         reply_markup=get_main_keyboard()
     )
+
+
 
 @router.callback_query(F.data.startswith("check_sub"))
 async def process_check_sub(callback: types.CallbackQuery, state: FSMContext):

@@ -15,69 +15,96 @@ router = Router()
 
 @router.message(AuthFlow.waiting_contact_login, F.contact)
 async def process_login_contact(message: types.Message, state: FSMContext):
+    # 1. Faqat foydalanuvchining o'z kontaktini qabul qilamiz (xavfsizlik uchun)
+    if message.contact.user_id != message.from_user.id:
+        return await message.answer("❌ Faqat o'z kontaktingizni yuboring.")
+
+    phone = normalize_phone(message.contact.phone_number)
+    tg_id = str(message.from_user.id) # Telegram User ID
+    
+    # State ichidan Frontend yuborgan user_id ni olamiz
+    state_data = await state.get_data()
+    user_id_from_site = state_data.get("external_user_id")
+
+    if not user_id_from_site:
+        return await message.answer("❌ Tizimda xatolik: User ID topilmadi. Saytdan qaytadan urinib ko'ring.")
+
+    async with AsyncSessionLocal() as db:
+        # 2. Asosiy User jadvalini yangilash (Telegram ID ni saqlash)
+        # UserIdentity yoki User modeliga telegram_id ni yozamiz
+        await db.execute(
+            update(User)
+            .where(User.id == int(user_id_from_site))
+            .values(telegram_id=tg_id)
+        )
+
+        # 3. UserContact jadvaliga telefon raqamini qo'shish yoki yangilash
+        # Avval bu userda ushbu raqam borligini tekshiramiz
+        stmt_check = select(UserContact).where(
+            and_(
+                UserContact.user_id == int(user_id_from_site), 
+                UserContact.contact_type == 'phone'
+            )
+        )
+        existing_contact = (await db.execute(stmt_check)).scalar_one_or_none()
+
+        if existing_contact:
+            # Agar kontakt bo'lsa, raqamni va statusni yangilaymiz
+            existing_contact.value = phone
+            existing_contact.is_verified = True
+        else:
+            # Agar kontakt bo'lmasa, yangisini yaratamiz
+            new_contact = UserContact(
+                user_id=int(user_id_from_site),
+                contact_type='phone',
+                value=phone,
+                is_verified=True # Telegramdan kelgani uchun darhol tasdiqlangan
+            )
+            db.add(new_contact)
+
+        # 4. Saqlash
+        await db.commit()
+
+        # 5. Foydalanuvchiga muvaffaqiyatli xabar yuborish
+        await message.answer(
+            f"✅ <b>Muvaffaqiyatli bog'landi!</b>\n\n"
+            f"📱 Raqam: <code>{phone}</code>\n"
+            f"🆔 Telegram ID: <code>{tg_id}</code>\n\n"
+            f"Profilingiz tasdiqlandi. Endi saytga qaytib sahifani yangilashingiz mumkin.",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard()
+        )
+
+    await state.clear()
+    
+@router.message(AuthFlow.waiting_contact_verify, F.contact)
+async def process_verify_contact(message: types.Message, state: FSMContext):
     if message.contact.user_id != message.from_user.id:
         return await message.answer("❌ Faqat o'z kontaktingizni yuboring.")
 
     contact_phone = normalize_phone(message.contact.phone_number)
     tg_id = str(message.from_user.id)
-    
-    state_data = await state.get_data()
-    user_id_from_site = state_data.get("external_user_id")
 
     async with AsyncSessionLocal() as db:
-        if user_id_from_site:
-            u_id = int(user_id_from_site)
-            
-            # 1. Asosiy User jadvalidagi telegram_id ni yangilash
-            await db.execute(
-                update(User).where(User.id == u_id).values(telegram_id=tg_id)
-            )
+        # Telefon raqami bo'yicha kontaktni topish
+        res = await db.execute(select(UserContact).where(
+            UserContact.contact_type == 'phone',
+            UserContact.value == contact_phone
+        ))
+        phone_contact = res.scalar_one_or_none()
 
-            # 2. KONTAKTLARNI SAQLASH (Telefon va Telegram ID)
-            # Bizga telefon va telegram kontaktlarini tekshirish kerak
-            stmt = select(UserContact).where(
-                and_(
-                    UserContact.user_id == u_id, 
-                    UserContact.contact_type.in_(['phone', 'telegram'])
-                )
-            )
-            existing_contacts = (await db.execute(stmt)).scalars().all()
-            
-            contact_map = {c.contact_type: c for c in existing_contacts}
+        if not phone_contact:
+            return await message.answer("❌ Bu raqam bazada topilmadi. Avval saytdan ro'yxatdan o'ting.")
 
-            # --- Telefon raqami uchun ---
-            if 'phone' in contact_map:
-                contact_map['phone'].value = contact_phone
-                contact_map['phone'].is_verified = True
-            else:
-                db.add(UserContact(
-                    user_id=u_id, contact_type='phone', 
-                    value=contact_phone, is_verified=True
-                ))
-
-            # --- Telegram ID uchun (Yangi qo'shildi) ---
-            if 'telegram' in contact_map:
-                contact_map['telegram'].value = tg_id
-                contact_map['telegram'].is_verified = True
-            else:
-                db.add(UserContact(
-                    user_id=u_id, contact_type='telegram', 
-                    value=tg_id, is_verified=True
-                ))
-
-            await db.commit()
-            
-            await message.answer(
-                f"✅ <b>Muvaffaqiyatli bog'landi!</b>\n\n"
-                f"📱 Telefon: <code>{contact_phone}</code>\n"
-                f"🔹 Telegram ID: <code>{tg_id}</code>\n\n"
-                f"Barcha ma'lumotlar tasdiqlandi. Saytga qaytishingiz mumkin.",
-                parse_mode="HTML",
-                reply_markup=get_main_keyboard()
-            )
-        else:
-            await message.answer("❌ Xatolik: Sayt orqali bog'lanish seansi topilmadi.")
-
+        # Tasdiqlash mantiqi
+        phone_contact.is_verified = True
+        
+        # User jadvalida telegram_id ni bog'lash
+        await db.execute(update(User).where(User.id == phone_contact.user_id).values(telegram_id=tg_id))
+        
+        await db.commit()
+        await message.answer("✅ Raqamingiz tasdiqlandi! Saytga qaytib sahifani yangilang.", reply_markup=get_main_keyboard())
+    
     await state.clear()
 
 @router.message(F.text == "🔑 Parolni o'zgartirish")
@@ -85,6 +112,21 @@ async def start_change_pw(message: types.Message, state: FSMContext):
     if not await check_subscription(message.bot, message.from_user.id): return
     await state.set_state(AuthFlow.waiting_contact_password)
     await message.answer("Xavfsizlik uchun kontaktingizni yuboring:", reply_markup=get_contact_keyboard())
+
+@router.message(AuthFlow.waiting_contact_forgot, F.contact)
+async def process_forgot_password_contact(message: types.Message, state: FSMContext):
+    contact_phone = normalize_phone(message.contact.phone_number)
+    
+    async with AsyncSessionLocal() as db:
+        res = await db.execute(select(UserContact).where(UserContact.value == contact_phone))
+        contact = res.scalar_one_or_none()
+        
+        if not contact:
+            return await message.answer("❌ Bu raqamli profil topilmadi.")
+
+        await state.update_data(reset_user_id=contact.user_id)
+        await state.set_state(AuthFlow.waiting_new_password)
+        await message.answer("Keyingi qadam: Endi yangi parolni yozib yuboring:")
 
 @router.message(AuthFlow.waiting_new_password)
 async def save_new_pw(message: types.Message, state: FSMContext):
