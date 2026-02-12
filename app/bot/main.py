@@ -9,7 +9,7 @@ from aiogram.enums import ParseMode
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
 from app.core.config import settings
-from handlers import common, auth, admin
+from app.bot.handlers import common, auth, admin
 
 async def main():
     bot = Bot(token=settings.TELEGRAM_BOT_TOKEN, 
