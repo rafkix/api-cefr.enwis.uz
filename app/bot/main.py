@@ -361,44 +361,95 @@ async def process_broadcast(message: types.Message, state: FSMContext):
         
         await message.answer(f"✅ Xabar {count} ta foydalanuvchiga yetkazildi.", reply_markup=get_admin_keyboard())
 
-# --- FOYDALANUVCHINI QIDIRISH ---
-@dp.message(F.text == "👥 Foydalanuvchilarni boshqarish")
-async def manage_users(message: types.Message, state: FSMContext):
-    if not await is_admin(message.from_user.id): return
-    await state.set_state(AdminStates.waiting_user_search)
-    await message.answer("Qidirish uchun foydalanuvchi telefon raqamini yoki ID sini yozing:")
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-@dp.message(AdminStates.waiting_user_search)
-async def search_user(message: types.Message, state: FSMContext):
+# --- FOYDALANUVCHILAR RO'YXATI (Paginatsiya bilan) ---
+@dp.message(F.text == "👥 Foydalanuvchilarni boshqarish")
+async def manage_users_list(message: types.Message, state: FSMContext):
+    if not await is_admin(message.from_user.id): return
+    
     async with AsyncSessionLocal() as db:
-        search = message.text
-        if search.startswith("+"): search = search[1:]
+        # Oxirgi 10 ta foydalanuvchini olish
+        stmt = select(User).options(selectinload(User.profile)).order_by(User.created_at.desc()).limit(10)
+        result = await db.execute(stmt)
+        users = result.scalars().all()
         
-        # Telefon yoki ID bo'yicha qidirish
-        stmt = select(User).join(UserContact).where(
-            (UserContact.value.contains(search)) | (User.id.cast(types.String) == search)
-        ).options(selectinload(User.profile), selectinload(User.contacts))
+        if not users:
+            return await message.answer("Bazada foydalanuvchilar mavjud emas.")
+
+        builder = InlineKeyboardBuilder()
+        for user in users:
+            name = user.profile.full_name if user.profile else f"ID: {user.id}"
+            builder.row(types.InlineKeyboardButton(
+                text=f"👤 {name}", 
+                callback_data=f"user_info:{user.id}")
+            )
+        
+        # Qidirish tugmasini ham qo'shamiz
+        builder.row(types.InlineKeyboardButton(text="🔍 Qidirish", callback_data="search_user_start"))
+        
+        await message.answer(
+            "👥 <b>Foydalanuvchilar ro'yxati:</b>\nBatafsil ma'lumot uchun foydalanuvchi ustiga bosing:",
+            reply_markup=builder.as_markup()
+        )
+
+# --- QIDIRISHNI BOSHLASH (Callback orqali) ---
+@dp.callback_query(F.data == "search_user_start")
+async def search_start_callback(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(AdminStates.waiting_user_search)
+    await callback.message.answer("Qidirish uchun telefon raqami yoki ID kiriting:")
+    await callback.answer()
+    
+    
+@dp.callback_query(F.data.startswith("user_info:"))
+async def show_detail_user(callback: types.CallbackQuery):
+    user_id = int(callback.data.split(":")[1])
+    
+    async with AsyncSessionLocal() as db:
+        stmt = select(User).options(
+            selectinload(User.profile), 
+            selectinload(User.contacts),
+            selectinload(User.identities)
+        ).where(User.id == user_id)
         
         user = (await db.execute(stmt)).scalar_one_or_none()
         
         if not user:
-            return await message.answer("❌ Foydalanuvchi topilmadi.")
+            return await callback.answer("Foydalanuvchi topilmadi.", show_alert=True)
         
-        contacts = "\n".join([f"• {c.value}" for c in user.contacts])
+        contacts = "\n".join([f"• {c.value} ({'✅' if c.is_verified else '❌'})" for c in user.contacts])
+        roles = ", ".join([r.name for r in user.roles]) if hasattr(user, 'roles') else "User"
+        
         text = (
-            f"👤 <b>Foydalanuvchi:</b> {user.profile.full_name}\n"
-            f"🆔 ID: <code>{user.id}</code>\n"
-            f"📅 Ro'yxatdan o'tdi: {user.created_at.strftime('%Y-%m-%d')}\n"
-            f"📞 Kontaktlar:\n{contacts}"
+            f"📋 <b>To'liq ma'lumot:</b>\n\n"
+            f"👤 <b>Ism:</b> {user.profile.full_name if user.profile else 'Noma'lum'}\n"
+            f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
+            f"🎭 <b>Rol:</b> {roles}\n"
+            f"📅 <b>Sana:</b> {user.created_at.strftime('%Y-%m-%d %H:%M')}\n"
+            f"📞 <b>Kontaktlar:</b>\n{contacts}\n\n"
+            f"⚙️ <b>Boshqaruv:</b>"
         )
         
-        # Bloklash yoki o'chirish tugmalari (Inline)
-        kb = types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text="🗑 O'chirish (DB dan)", callback_data=f"delete_u:{user.id}")]
-        ])
+        builder = InlineKeyboardBuilder()
+        # Boshqaruv tugmalari
+        builder.row(
+            types.InlineKeyboardButton(text="🛡 Rolni o'zgartirish", callback_data=f"edit_role:{user.id}"),
+            types.InlineKeyboardButton(text="🔑 Parolni tiklash", callback_data=f"reset_pw:{user.id}")
+        )
+        builder.row(
+            types.InlineKeyboardButton(text="🚫 Bloklash", callback_data=f"block_u:{user.id}"),
+            types.InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"delete_u:{user.id}")
+        )
+        builder.row(types.InlineKeyboardButton(text="⬅️ Ro'yxatga qaytish", callback_data="back_to_users"))
         
-        await message.answer(text, reply_markup=kb)
-        await state.clear()
+        await callback.message.edit_text(text, reply_markup=builder.as_markup())
+
+# --- ORQAGA QAYTISH ---
+@dp.callback_query(F.data == "back_to_users")
+async def back_to_users(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.delete()
+    await manage_users_list(callback.message, state)
+    
 
 @dp.message(F.text == "🏠 Asosiy menyu")
 async def back_to_main(message: types.Message):
