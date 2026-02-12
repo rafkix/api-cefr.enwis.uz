@@ -444,19 +444,8 @@ async def show_detail_user(callback: types.CallbackQuery):
         
         await callback.message.edit_text(text, reply_markup=builder.as_markup())
 
-# --- ORQAGA QAYTISH ---
-@dp.callback_query(F.data == "back_to_users")
-async def back_to_users(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.delete()
-    await manage_users_list(callback.message, state)
-    
-
-@dp.message(F.text == "🏠 Asosiy menyu")
-async def back_to_main(message: types.Message):
-    await message.answer("Bosh menyu:", reply_markup=get_main_keyboard())
-
 # --- O'CHIRISH FUNKSIYASI ---
-@dp.callback_query(F.data.startswith("delete_u:"))
+@dp.callback_query(F.data.startswith("block_u:"))
 async def delete_user_callback(callback: types.CallbackQuery):
     if not await is_admin(callback.from_user.id): return
     uid = int(callback.data.split(":")[1])
@@ -467,6 +456,57 @@ async def delete_user_callback(callback: types.CallbackQuery):
         await db.commit()
         await callback.answer("✅ Foydalanuvchi tizimda nofaol qilindi.", show_alert=True)
         await callback.message.delete()
+        
+@dp.callback_query(F.data.startswith("delete_u:"))
+async def confirm_delete_user(callback: types.CallbackQuery):
+    if not await is_admin(callback.from_user.id): return
+    user_id = int(callback.data.split(":")[1])
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        types.InlineKeyboardButton(text="✅ Ha, butunlay o'chirilsin", callback_data=f"force_delete:{user_id}"),
+        types.InlineKeyboardButton(text="❌ Yo'q, bekor qilish", callback_data=f"user_info:{user_id}")
+    )
+    
+    await callback.message.edit_text(
+        "⚠️ <b>Diqqat!</b> Foydalanuvchini o'chirsangiz, uning barcha natijalari va profil ma'lumotlari qayta tiklanmaydigan qilib o'chiriladi. Rozimisiz?",
+        reply_markup=builder.as_markup()
+    )
+
+# --- BUTUNLAY O'CHIRISH (Hard Delete) ---
+@dp.callback_query(F.data.startswith("force_delete:"))
+async def force_delete_user(callback: types.CallbackQuery, state: FSMContext):
+    if not await is_admin(callback.from_user.id): return
+    user_id = int(callback.data.split(":")[1])
+    
+    async with AsyncSessionLocal() as db:
+        # Userni qidirib topish
+        stmt = select(User).where(User.id == user_id)
+        user = (await db.execute(stmt)).scalar_one_or_none()
+        
+        if user:
+            # SQLAlchemy orqali o'chirish (Agar modellar orasida cascade="all, delete-orphan" bo'lsa)
+            await db.delete(user)
+            await db.commit()
+            
+            await callback.answer("✅ Foydalanuvchi bazadan butunlay o'chirildi!", show_alert=True)
+            await callback.message.delete()
+            # Ro'yxatga qaytish
+            await manage_users_list(callback.message, state)
+        else:
+            await callback.answer("❌ Xatolik: Foydalanuvchi allaqachon o'chirilgan bo'lishi mumkin.", show_alert=True)
+            
+
+# --- ORQAGA QAYTISH ---
+@dp.callback_query(F.data == "back_to_users")
+async def back_to_users(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.delete()
+    await manage_users_list(callback.message, state)
+    
+
+@dp.message(F.text == "🏠 Asosiy menyu")
+async def back_to_main(message: types.Message):
+    await message.answer("Bosh menyu:", reply_markup=get_main_keyboard())
 
 # ================= ASOSIY ISHGA TUSHIRISH =================
 async def main():
