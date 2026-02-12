@@ -38,6 +38,51 @@ async def manage_users_list(message: types.Message):
         builder.row(types.InlineKeyboardButton(text="🔍 Qidirish", callback_data="search_user_start"))
         await message.answer("Foydalanuvchilar:", reply_markup=builder.as_markup())
 
+@router.callback_query(F.data.startswith("user_info:"))
+async def show_user_detail(callback: types.CallbackQuery):
+    user_id = int(callback.data.split(":")[1])
+    async with AsyncSessionLocal() as db:
+        # Foydalanuvchini barcha bog'liqliklari bilan yuklaymiz
+        result = await db.execute(
+            select(User).options(selectinload(User.profile)).where(User.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            return await callback.answer("Foydalanuvchi topilmadi.")
+
+        status = "🔴 Bloklangan" if user.is_active is False else "🟢 Faol"
+        role = user.role if hasattr(user, 'role') else "User"
+        
+        info_text = (
+            f"👤 **Foydalanuvchi ma'lumotlari:**\n\n"
+            f"🆔 ID: `{user.id}`\n"
+            f"📝 Ism: {user.profile.full_name if user.profile else 'Noma'lum'}\n"
+            f"🎭 Rol: `{role}`\n"
+            f"📊 Holati: {status}\n"
+            f"📅 Ro'yxatdan o'tdi: {user.created_at.strftime('%Y-%m-%d')}"
+        )
+        
+        await callback.message.edit_text(
+            info_text, 
+            reply_markup=get_user_manage_kb(user.id),
+            parse_mode="Markdown"
+        )
+
+@router.callback_query(F.data.startswith("block_u:"))
+async def toggle_block_user(callback: types.CallbackQuery):
+    user_id = int(callback.data.split(":")[1])
+    async with AsyncSessionLocal() as db:
+        user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        if user:
+            # Holatni teskarisiga o'zgartiramiz
+            user.is_active = not user.is_active
+            await db.commit()
+            status_msg = "bloklandi" if not user.is_active else "blokdan ochildi"
+            await callback.answer(f"✅ Foydalanuvchi {status_msg}!", show_alert=True)
+            # Ma'lumotni yangilaymiz
+            await show_user_detail(callback)
+
 @router.callback_query(F.data.startswith("delete_u:"))
 async def confirm_delete(callback: types.CallbackQuery):
     user_id = callback.data.split(":")[1]
@@ -58,3 +103,8 @@ async def hard_delete_user(callback: types.CallbackQuery):
             await callback.message.delete()
         else:
             await callback.answer("Topilmadi.")
+            
+@router.callback_query(F.data == "back_to_users")
+async def back_to_list(callback: types.CallbackQuery):
+    await manage_users_list(callback.message)
+    await callback.message.delete()
