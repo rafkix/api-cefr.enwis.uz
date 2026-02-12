@@ -13,7 +13,7 @@ async def cmd_start(message: types.Message, command: CommandObject, state: FSMCo
     await state.clear()
     args = command.args
 
-    # 1. Obunani tekshirish
+    # 1. Obunani tekshirish (majburiy kanal)
     if not await check_subscription(message.bot, message.from_user.id):
         return await message.answer(
             "👋 Xush kelibsiz! Botdan foydalanish uchun kanalga a'zo bo'ling.", 
@@ -22,40 +22,70 @@ async def cmd_start(message: types.Message, command: CommandObject, state: FSMCo
 
     # 2. Argumentlarni tahlil qilish
     if args:
-        # Parolni tiklash holati
+        # A. SMS kod berish holati (sms_998901234567)
+        if args.startswith("sms_"):
+            phone = normalize_phone(args.replace("sms_", ""))
+            otp_code = generate_otp()
+            
+            async with AsyncSessionLocal() as db:
+                db.add(VerificationCode(
+                    value=phone,
+                    code=otp_code,
+                    purpose=VerificationPurpose.PHONE_VERIFICATION,
+                    expires_at=datetime.utcnow() + timedelta(minutes=5)
+                ))
+                await db.commit()
+            
+            return await message.answer(
+                f"🔢 Tasdiqlash kodingiz: <code>{otp_code}</code>\n\n"
+                f"Uni saytdagi maydonga kiriting. Amal qilish muddati: 5 daqiqa.",
+                parse_mode="HTML"
+            )
+
+        # B. Parolni tiklash holati
         if args == "forgot_password":
             await state.set_state(AuthFlow.waiting_contact_forgot)
-            return await message.answer("🔐 Parolni tiklash uchun kontaktingizni yuboring:", reply_markup=get_contact_keyboard())
+            return await message.answer(
+                "🔐 Parolni tiklash uchun kontaktingizni yuboring:", 
+                reply_markup=get_contact_keyboard()
+            )
 
-        # Telefon raqami va qo'shimcha ma'lumotlarni tahlil qilish (masalan: "998901234567_102" yoki "998901234567")
-        # Biz "_" belgisidan bo'lib olamiz
+        # C. Raqam va UserID ni bog'lash holati (998901234567_102)
+        # "_" belgisi orqali ajratamiz
         parts = args.split("_")
         potential_phone = parts[0]
         
-        if potential_phone.isdigit() or potential_phone.startswith("998"):
+        if potential_phone.isdigit() and len(potential_phone) >= 9:
             phone = normalize_phone(potential_phone)
-            
-            # Agar "_" dan keyin nimadir bo'lsa (masalan user_id), uni ham saqlab qo'yamiz
-            extra_info = parts[1] if len(parts) > 1 else None
+            # Agar "_" dan keyin ID kelsa, uni saqlaymiz (masalan: 102)
+            extra_user_id = parts[1] if len(parts) > 1 else None
             
             await state.update_data(
                 login_phone=phone,
-                external_user_id=extra_info # Kerak bo'lsa keyin ishlatish uchun
+                external_user_id=extra_user_id
             )
             
             await state.set_state(AuthFlow.waiting_contact_login)
             return await message.answer(
-                f"🔐 {phone} raqamini tasdiqlash uchun kontaktingizni yuboring:", 
+                f"🤝 {phone} raqamini profilingizga bog'lash va tasdiqlash uchun "
+                f"pastdagi tugma orqali kontaktingizni yuboring:", 
                 reply_markup=get_contact_keyboard()
             )
-            
-        # Agar argument "verify_phone" bo'lsa (Frontend'dagi oddiy holat uchun)
+
+        # D. Oddiy tasdiqlash (verify_phone)
         if args == "verify_phone":
             await state.set_state(AuthFlow.waiting_contact_login)
-            return await message.answer("📱 Telefon raqamingizni tasdiqlash uchun kontaktingizni yuboring:", reply_markup=get_contact_keyboard())
+            return await message.answer(
+                "📱 Telefon raqamingizni tasdiqlash uchun kontaktingizni yuboring:", 
+                reply_markup=get_contact_keyboard()
+            )
 
-    # Argument yo'q bo'lsa yoki tushunarsiz bo'lsa
-    await message.answer(f"Xush kelibsiz, {message.from_user.first_name}!", reply_markup=get_main_keyboard())
+    # 3. Argument yo'q bo'lsa yoki shunchaki kirgan bo'lsa
+    await message.answer(
+        f"Xush kelibsiz, {message.from_user.first_name}!\n"
+        "Profilingizni boshqarish uchun saytdan foydalaning.", 
+        reply_markup=get_main_keyboard()
+    )
 
 @router.callback_query(F.data.startswith("check_sub"))
 async def process_check_sub(callback: types.CallbackQuery, state: FSMContext):
