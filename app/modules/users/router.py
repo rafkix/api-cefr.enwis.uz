@@ -6,13 +6,15 @@ import uuid
 from app.core.database import get_db
 from app.modules.auth.dependencies import get_current_user
 from app.modules.auth.models import User
-from app.modules.users.service import USERService
+from app.modules.users.service import USERService  # Klas nomi service.py ichida qanday bo'lsa shunday yozing
 from app.modules.users import schemas
 
 router = APIRouter(prefix="/user/me", tags=["My Profile"])
 
-# Dependency
+# --- DEPENDENCY ---
+
 async def get_service(db: AsyncSession = Depends(get_db)) -> USERService:
+    """UserService obyektini yaratish."""
     return USERService(db)
 
 # --- SECTION: PROFILE ---
@@ -39,20 +41,20 @@ async def create_avatar(
 ):
     """Profil rasmini yuklash (Maks 10MB)."""
     if not file.content_type.startswith("image/"):
-        raise HTTPException(400, "Faqat rasm yuklash mumkin")
+        raise HTTPException(status_code=400, detail="Faqat rasm yuklash mumkin")
     return {"avatar_url": await service.upload_avatar(user.id, file)}
 
 # --- SECTION: CONTACTS ---
 
-@router.post("/me/contacts")
+@router.post("/contacts")
 async def add_contact_start_api(
     payload: schemas.AddContactSchema, 
-    user_id: int = Depends(get_current_user), # Token orqali user_id
-    db_service: UserService = Depends(get_current_user)
+    user: User = Depends(get_current_user), 
+    service: USERService = Depends(get_service)
 ):
-    # Payload ichidan ma'lumotlarni olamiz
-    return await db_service.add_contact_start(
-        user_id=user_id, 
+    """Kontakt qo'shishni boshlash (OTP kod yaratish)."""
+    return await service.add_contact_start(
+        user_id=user.id, 
         value=payload.value, 
         contact_type=payload.type
     )
@@ -64,7 +66,12 @@ async def verify_contact_creation(
     service: USERService = Depends(get_service)
 ):
     """OTPni tasdiqlash va kontaktni saqlash."""
-    return await service.add_contact_verify(user.id, data.value, data.code, data.type)
+    return await service.add_contact_verify(
+        user_id=user.id, 
+        value=data.value, 
+        code=data.code, 
+        contact_type=data.type
+    )
 
 @router.get("/contacts", response_model=List[schemas.ContactResponse])
 async def read_my_contacts(
