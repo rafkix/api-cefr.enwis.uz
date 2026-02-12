@@ -39,6 +39,7 @@ class VerificationPurpose(str, PyEnum):
     VERIFY_EMAIL = "verify_email"
     VERIFY_PHONE = "verify_phone"
     LOGIN = "login"
+    ADD_CONTACT = "add_contact"
 
 class User(Base, TimestampMixin):
     """
