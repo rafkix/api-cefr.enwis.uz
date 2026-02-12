@@ -30,7 +30,7 @@ from app.modules.auth.models import (
 # ================= KONFIGURATSIYA =================
 REQUIRED_CHANNEL = "@enwis_uz" 
 # app/core/config.py faylingizda ADMIN_IDS = [1234567, 8901234] kabi ro'yxat bo'lishi kerak
-ADMINS = [561234567]  # O'zingizning Telegram ID'ingizni yozing yoki settings.ADMIN_IDS dan oling
+ADMINS = [7281495879, 6813390517]  # O'zingizning Telegram ID'ingizni yozing yoki settings.ADMIN_IDS dan oling
 
 class AdminStates(StatesGroup):
     waiting_broadcast_text = State()
