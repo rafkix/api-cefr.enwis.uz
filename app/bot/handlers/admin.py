@@ -7,10 +7,10 @@ from datetime import datetime, timedelta
 
 from app.core.database import AsyncSessionLocal
 from app.modules.auth.models import User, UserIdentity, AuthProvider
-from utils.helpers import is_admin
-from keyboards.reply import get_admin_keyboard, get_main_keyboard
-from keyboards.inline import get_user_manage_kb
-from states.states import AdminStates
+from app.bot.utils.helpers import is_admin
+from app.bot.keyboards.reply import get_admin_keyboard, get_main_keyboard
+from app.bot.keyboards.inline import get_user_manage_kb
+from app.bot.states.states import AdminStates
 
 router = Router()
 

@@ -7,9 +7,9 @@ from datetime import datetime, timedelta
 from app.core.database import AsyncSessionLocal
 from app.core.security import hash_password
 from app.modules.auth.models import User, UserContact, UserIdentity, VerificationCode, VerificationPurpose, AuthProvider
-from utils.helpers import normalize_phone, generate_otp, check_subscription
-from states.states import AuthFlow
-from keyboards.reply import get_main_keyboard, get_contact_keyboard
+from app.bot.utils.helpers import normalize_phone, generate_otp, check_subscription
+from app.bot.states.states import AuthFlow
+from app.bot.keyboards.reply import get_main_keyboard, get_contact_keyboard
 
 router = Router()
 

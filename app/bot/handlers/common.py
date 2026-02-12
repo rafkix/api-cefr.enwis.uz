@@ -2,9 +2,9 @@ from aiogram import Router, types, F
 from aiogram.filters import CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
 from app.bot.utils.helpers import check_subscription, normalize_phone
-from keyboards.reply import get_main_keyboard, get_contact_keyboard
-from keyboards.inline import get_sub_keyboard
-from states.states import AuthFlow
+from app.bot.keyboards.reply import get_main_keyboard, get_contact_keyboard
+from app.bot.keyboards.inline import get_sub_keyboard
+from app.bot.states.states import AuthFlow
 
 router = Router()
 
