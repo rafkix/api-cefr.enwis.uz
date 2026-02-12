@@ -211,8 +211,8 @@ class AuthService:
                         user_id=uid,
                         contact_type="email",
                         value=email,
-                        is_verified=True,  # Google'dan kelgan email tasdiqlangan bo'ladi
-                        is_primary=True
+                        is_verified=False,  # Google'dan kelgan email tasdiqlangan bo'ladi
+                        is_primary=False
                     ))
 
                 # Identity (Google/Telegram ID bog'lash)
