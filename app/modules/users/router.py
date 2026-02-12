@@ -48,7 +48,7 @@ async def create_avatar(
 async def add_contact_start_api(
     payload: schemas.AddContactSchema, 
     user_id: int = Depends(get_current_user), # Token orqali user_id
-    db_service: UserService = Depends(get_user_service)
+    db_service: UserService = Depends(get_current_user)
 ):
     # Payload ichidan ma'lumotlarni olamiz
     return await db_service.add_contact_start(
