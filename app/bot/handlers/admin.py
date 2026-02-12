@@ -57,7 +57,7 @@ async def show_user_detail(callback: types.CallbackQuery):
         info_text = (
             f"👤 **Foydalanuvchi ma'lumotlari:**\n\n"
             f"🆔 ID: `{user.id}`\n"
-            f"📝 Ism: {user.profile.full_name if user.profile else 'Noma'lum'}\n"
+            f"📝 Ism: {user.profile.full_name if user.profile else 'Noma\'lum'}\n"
             f"🎭 Rol: `{role}`\n"
             f"📊 Holati: {status}\n"
             f"📅 Ro'yxatdan o'tdi: {user.created_at.strftime('%Y-%m-%d')}"
