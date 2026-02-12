@@ -29,6 +29,12 @@ from app.modules.auth.models import (
 
 # ================= KONFIGURATSIYA =================
 REQUIRED_CHANNEL = "@enwis_uz" 
+# app/core/config.py faylingizda ADMIN_IDS = [1234567, 8901234] kabi ro'yxat bo'lishi kerak
+ADMINS = [561234567]  # O'zingizning Telegram ID'ingizni yozing yoki settings.ADMIN_IDS dan oling
+
+class AdminStates(StatesGroup):
+    waiting_broadcast_text = State()
+    waiting_user_search = State()
 
 # ================= HOLATLAR (FSM) =================
 class AuthFlow(StatesGroup):
@@ -84,6 +90,13 @@ def get_sub_keyboard(args=None):
         [types.InlineKeyboardButton(text="🔄 Obunani tekshirish", callback_data=cb_data)]
     ]
     return types.InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_admin_keyboard():
+    kb = [
+        [types.KeyboardButton(text="📊 Statistika"), types.KeyboardButton(text="👥 Foydalanuvchilarni boshqarish")],
+        [types.KeyboardButton(text="📢 Xabar yuborish"), types.KeyboardButton(text="🏠 Asosiy menyu")]
+    ]
+    return types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 # ================= HANDLERLAR =================
 
@@ -285,6 +298,124 @@ async def show_profile(message: types.Message):
         if user:
             contacts = "\n".join([f"• {c.value}" for c in user.contacts])
             await message.answer(f"👤 <b>Profil:</b> {user.profile.full_name}\n🆔 ID: <code>{user.id}</code>\n📞 Raqamlar:\n{contacts}")
+
+async def is_admin(user_id: int) -> bool:
+    return user_id in ADMINS
+
+@dp.message(F.text == "/admin")
+async def admin_panel(message: types.Message):
+    if not await is_admin(message.from_user.id): return
+    await message.answer("🛠 <b>Admin paneliga xush kelibsiz!</b>", reply_markup=get_admin_keyboard())
+
+# --- STATISTIKA ---
+@dp.message(F.text == "📊 Statistika")
+async def show_stats(message: types.Message):
+    if not await is_admin(message.from_user.id): return
+    
+    async with AsyncSessionLocal() as db:
+        # Jami foydalanuvchilar
+        total_users = (await db.execute(select(User))).scalars().all()
+        # Telegram bog'laganlar
+        tg_linked = (await db.execute(select(UserIdentity).where(UserIdentity.provider == AuthProvider.TELEGRAM))).scalars().all()
+        # Oxirgi 24 soatda qo'shilganlar
+        last_24h = datetime.utcnow() - timedelta(days=1)
+        new_users = (await db.execute(select(User).where(User.created_at >= last_24h))).scalars().all()
+
+        text = (
+            "📈 <b>Bot statistikasi:</b>\n\n"
+            f"👤 Jami foydalanuvchilar: <b>{len(total_users)} ta</b>\n"
+            f"🔗 Telegram bog'langan: <b>{len(tg_linked)} ta</b>\n"
+            f"✨ Yangi (24 soat): <b>{len(new_users)} ta</b>"
+        )
+        await message.answer(text)
+
+# --- REKLAMA / XABAR YUBORISH ---
+@dp.message(F.text == "📢 Xabar yuborish")
+async def start_broadcast(message: types.Message, state: FSMContext):
+    if not await is_admin(message.from_user.id): return
+    await state.set_state(AdminStates.waiting_broadcast_text)
+    await message.answer("Xabarni kiriting (rasm, matn yoki video):", reply_markup=types.ReplyKeyboardRemove())
+
+@dp.message(AdminStates.waiting_broadcast_text)
+async def process_broadcast(message: types.Message, state: FSMContext):
+    await state.clear()
+    async with AsyncSessionLocal() as db:
+        # Faqat telegrami bor foydalanuvchilarni olish
+        stmt = select(UserIdentity).where(UserIdentity.provider == AuthProvider.TELEGRAM)
+        users = (await db.execute(stmt)).scalars().all()
+        
+        count = 0
+        await message.answer(f"🚀 Xabar yuborish boshlandi ({len(users)} kishiga)...")
+        
+        for user in users:
+            try:
+                await bot.copy_message(
+                    chat_id=int(user.provider_id),
+                    from_chat_id=message.chat.id,
+                    message_id=message.message_id
+                )
+                count += 1
+                await asyncio.sleep(0.05) # Telegram limitidan oshmaslik uchun
+            except Exception:
+                continue
+        
+        await message.answer(f"✅ Xabar {count} ta foydalanuvchiga yetkazildi.", reply_markup=get_admin_keyboard())
+
+# --- FOYDALANUVCHINI QIDIRISH ---
+@dp.message(F.text == "👥 Foydalanuvchilarni boshqarish")
+async def manage_users(message: types.Message, state: FSMContext):
+    if not await is_admin(message.from_user.id): return
+    await state.set_state(AdminStates.waiting_user_search)
+    await message.answer("Qidirish uchun foydalanuvchi telefon raqamini yoki ID sini yozing:")
+
+@dp.message(AdminStates.waiting_user_search)
+async def search_user(message: types.Message, state: FSMContext):
+    async with AsyncSessionLocal() as db:
+        search = message.text
+        if search.startswith("+"): search = search[1:]
+        
+        # Telefon yoki ID bo'yicha qidirish
+        stmt = select(User).join(UserContact).where(
+            (UserContact.value.contains(search)) | (User.id.cast(types.String) == search)
+        ).options(selectinload(User.profile), selectinload(User.contacts))
+        
+        user = (await db.execute(stmt)).scalar_one_or_none()
+        
+        if not user:
+            return await message.answer("❌ Foydalanuvchi topilmadi.")
+        
+        contacts = "\n".join([f"• {c.value}" for c in user.contacts])
+        text = (
+            f"👤 <b>Foydalanuvchi:</b> {user.profile.full_name}\n"
+            f"🆔 ID: <code>{user.id}</code>\n"
+            f"📅 Ro'yxatdan o'tdi: {user.created_at.strftime('%Y-%m-%d')}\n"
+            f"📞 Kontaktlar:\n{contacts}"
+        )
+        
+        # Bloklash yoki o'chirish tugmalari (Inline)
+        kb = types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="🗑 O'chirish (DB dan)", callback_data=f"delete_u:{user.id}")]
+        ])
+        
+        await message.answer(text, reply_markup=kb)
+        await state.clear()
+
+@dp.message(F.text == "🏠 Asosiy menyu")
+async def back_to_main(message: types.Message):
+    await message.answer("Bosh menyu:", reply_markup=get_main_keyboard())
+
+# --- O'CHIRISH FUNKSIYASI ---
+@dp.callback_query(F.data.startswith("delete_u:"))
+async def delete_user_callback(callback: types.CallbackQuery):
+    if not await is_admin(callback.from_user.id): return
+    uid = int(callback.data.split(":")[1])
+    
+    async with AsyncSessionLocal() as db:
+        # Userni o'chirish (Cascade o'chadi agar modellar to'g'ri sozlangan bo'lsa)
+        await db.execute(update(User).where(User.id == uid).values(is_active=False)) # O'chirish o'rniga nofaol qilish xavfsizroq
+        await db.commit()
+        await callback.answer("✅ Foydalanuvchi tizimda nofaol qilindi.", show_alert=True)
+        await callback.message.delete()
 
 # ================= ASOSIY ISHGA TUSHIRISH =================
 async def main():
