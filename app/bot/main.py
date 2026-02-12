@@ -422,7 +422,7 @@ async def show_detail_user(callback: types.CallbackQuery):
         
         text = (
             f"📋 <b>To'liq ma'lumot:</b>\n\n"
-            f"👤 <b>Ism:</b> {user.profile.full_name if user.profile else 'Noma'lum'}\n"
+            f"👤 <b>Ism:</b> {user.profile.full_name if user.profile else 'Noma\'lum'}\n"
             f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
             f"🎭 <b>Rol:</b> {roles}\n"
             f"📅 <b>Sana:</b> {user.created_at.strftime('%Y-%m-%d %H:%M')}\n"
