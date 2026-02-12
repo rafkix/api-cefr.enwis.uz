@@ -34,15 +34,19 @@ async def update_my_profile(
     return await service.update_profile(user.id, data)
 
 @router.post("/avatar", response_model=schemas.AvatarUpdateResponse)
-async def create_avatar(
+async def upload_avatar(
     file: UploadFile = File(...),
-    user: User = Depends(get_current_user),
-    service: USERService = Depends(get_service)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    """Profil rasmini yuklash (Maks 10MB)."""
-    if not file.content_type.startswith("image/"):
+    """Profil rasmini yuklash (Avatar)."""
+    content_type = getattr(file, "content_type", None)
+    if not content_type or not content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Faqat rasm yuklash mumkin")
-    return {"avatar_url": await service.upload_avatar(user.id, file)}
+    
+    service = USERService(db)
+    url = await service.upload_avatar(current_user.id, file)
+    return {"avatar_url": url, "message": "Avatar muvaffaqiyatli yuklandi"}
 
 # --- SECTION: CONTACTS ---
 

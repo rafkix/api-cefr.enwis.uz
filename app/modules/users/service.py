@@ -75,12 +75,43 @@ class USERService:
         }
 
     # --- UPDATE (Profile & Primary Status) ---
-    async def update_profile(self, user_id: int, data: schemas.ProfileUpdate):
-        update_data = data.model_dump(exclude_unset=True)
-        if update_data:
-            await self.db.execute(update(UserProfile).where(UserProfile.user_id == user_id).values(**update_data))
+    async def upload_avatar(self, user_id: int, file: UploadFile) -> str:
+        """Profil rasmini yuklash va URLni saqlash"""
+        upload_dir = "static/avatars"
+        os.makedirs(upload_dir, exist_ok=True)
+
+        # Fayl nomini generatsiya qilish
+        original_filename = getattr(file, "filename", "") or ""
+        _, ext = os.path.splitext(original_filename)
+        file_ext = ext.lstrip(".") if ext else "jpg"
+        file_name = f"user_{user_id}_{uuid.uuid4().hex}.{file_ext}"
+        file_path = os.path.join(upload_dir, file_name)
+
+        # Faylni diskka yozish
+        try:
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail="Faylni serverga yozishda xatolik")
+
+        avatar_url = f"/static/avatars/{file_name}"
+        
+        try:
+            # Bazada avatar URLni yangilash
+            await self.db.execute(
+                update(UserProfile)
+                .where(UserProfile.user_id == user_id)
+                .values(avatar_url=avatar_url)
+            )
+            await self.db.flush()
             await self.db.commit()
-        return await self.get_user_by_id(user_id)
+            return avatar_url
+        except Exception as e:
+            await self.db.rollback()
+            # Agar DBga yozishda xato bo'lsa, yuklangan faylni o'chirib tashlaymiz
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            raise HTTPException(status_code=500, detail=f"Ma'lumotlar bazasi qulflangan yoki xato: {str(e)}")
 
     async def set_primary_contact(self, user_id: int, contact_id: int):
         contact = (await self.db.execute(
