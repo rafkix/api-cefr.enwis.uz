@@ -38,20 +38,30 @@ class USERService:
         return list(result.scalars().all())
 
     # --- CREATE (Contact & Avatar) ---
+    # Backend (API qismi)
     async def add_contact_start(self, user_id: int, value: str, contact_type: str):
+        # 1. Avval mavjudligini tekshirish
         existing = await self.db.execute(select(UserContact).where(UserContact.value == value))
         if existing.scalar_one_or_none():
-            raise HTTPException(400, "Bu kontakt allaqachon mavjud")
+            # Bu yerda detail='...' deb yuboring, FastAPI detail kutadi
+            raise HTTPException(400, detail="Bu kontakt allaqachon mavjud")
 
         code = str(secrets.randbelow(900000) + 100000)
+        
+        # Eskilarini o'chirish
         await self.db.execute(delete(VerificationCode).where(VerificationCode.target == value))
         
+        # Yangi kodni saqlash
         self.db.add(VerificationCode(
-            target=value, code=code, purpose=VerificationPurpose.ADD_CONTACT,
+            target=value, 
+            code=code, 
+            purpose=VerificationPurpose.ADD_CONTACT,
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)
         ))
+        
         await self.db.commit()
-        return {"message": "Kod yuborildi", "debug_code": code}
+        # Frontendda toast ko'rinishi uchun
+        return {"status": "success", "message": "Kod yuborildi"}
 
     async def add_contact_verify(self, user_id: int, value: str, code: str, contact_type: str):
         stmt = select(VerificationCode).where(
