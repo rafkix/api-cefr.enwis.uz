@@ -136,14 +136,14 @@ class AuthService:
 
     # 1. GOOGLE LOGIN
     async def google_login(self, data: GoogleLoginRequest, request: Request) -> Token:
-        """Google orqali kirish (Yangi foydalanuvchi bo'lsa avtomat ro'yxatdan o'tkazadi)."""
         return await self._social_auth_logic(
             provider=AuthProvider.GOOGLE, 
             p_id=data.google_id, 
             name=data.name, 
             username_suggestion=data.email.split('@')[0], 
             request=request,
-            avatar=data.picture
+            avatar=data.picture,
+            email=data.email  # <--- Email qo'shildi
         )
 
     # 2. TELEGRAM LOGIN
@@ -166,64 +166,73 @@ class AuthService:
 
     # 3. UMUMIY SOCIAL MANTIQ (High-Performance & Race-Condition Safe)
     async def _social_auth_logic(
-        self,
-        provider: AuthProvider,
-        p_id: str,
-        name: str,
-        username_suggestion: Optional[str],
-        request: Request,
-        avatar: Optional[str] = None
-    ) -> Token:
-        # Birinchi tekshiruv: Foydalanuvchi bazada bormi?
-        stmt = select(UserIdentity).where(
-            UserIdentity.provider == provider,
-            UserIdentity.provider_id == p_id
-        )
-        identity = (await self.db.execute(stmt)).scalar_one_or_none()
+    self,
+    provider: AuthProvider,
+    p_id: str,
+    name: str,
+    username_suggestion: Optional[str],
+    request: Request,
+    avatar: Optional[str] = None,
+    email: Optional[str] = None  # <--- Email argumenti
+) -> Token:
+    # 1. Tekshiruv (Mavjud foydalanuvchi)
+    stmt = select(UserIdentity).where(
+        UserIdentity.provider == provider,
+        UserIdentity.provider_id == p_id
+    )
+    identity = (await self.db.execute(stmt)).scalar_one_or_none()
 
-        if identity:
-            # Mavjud foydalanuvchi uchun seans yaratish
-            user = await self._get_full_user(identity.user_id)
-            tokens = await self.create_tokens(user, request)
-            await self.db.commit()
-            return tokens
-
-        # Ikkinchi bosqich: Yangi foydalanuvchi yaratish (Tranzaksiya himoyasi bilan)
-        try:
-            async with self.db.begin_nested(): # SAVEPOINT yaratish
-                uid = await self._generate_user_id()
-                user = User(id=uid, global_role=UserRole.USER)
-                self.db.add(user)
-                
-                # Username band bo'lsa avtomat o'zgartirish
-                username = await self._generate_unique_username(username_suggestion, uid)
-                
-                self.db.add(UserProfile(
-                    user_id=uid,
-                    full_name=name,
-                    username=username,
-                    avatar_url=avatar
-                ))
-
-                self.db.add(UserIdentity(
-                    user_id=uid,
-                    provider=provider,
-                    provider_id=p_id
-                ))
-                await self.db.flush() # Bazaga yuborish, lekin commit qilmaslik
-
-        except IntegrityError:
-            # Agar parallel so'rovda user yaratilib ulgurgan bo'lsa
-            await self.db.rollback() # Savepointni orqaga qaytarish
-            # Qaytadan tekshirib mavjudini olish
-            identity = (await self.db.execute(stmt)).scalar_one()
-            uid = identity.user_id
-
-        # Yakuniy yuklash va token berish
-        full_user = await self._get_full_user(uid)
-        tokens = await self.create_tokens(full_user, request)
+    if identity:
+        user = await self._get_full_user(identity.user_id)
+        tokens = await self.create_tokens(user, request)
         await self.db.commit()
         return tokens
+
+    # 2. Yangi foydalanuvchi yaratish
+    try:
+        async with self.db.begin_nested():
+            uid = await self._generate_user_id()
+            user = User(id=uid, global_role=UserRole.USER)
+            self.db.add(user)
+            
+            username = await self._generate_unique_username(username_suggestion, uid)
+            
+            # Profil ma'lumotlari
+            self.db.add(UserProfile(
+                user_id=uid,
+                full_name=name,
+                username=username,
+                avatar_url=avatar
+            ))
+
+            # --- MUHIM JOYI: Kontaktlarga saqlash ---
+            if email:
+                from your_app.models import UserContact # Model nomiga qarang
+                self.db.add(UserContact(
+                    user_id=uid,
+                    contact_type="email",
+                    value=email,
+                    is_verified=True,  # Google'dan kelgan email tasdiqlangan bo'ladi
+                    is_primary=True
+                ))
+
+            # Identity (Google/Telegram ID bog'lash)
+            self.db.add(UserIdentity(
+                user_id=uid,
+                provider=provider,
+                provider_id=p_id
+            ))
+            await self.db.flush()
+
+    except IntegrityError:
+        await self.db.rollback()
+        identity = (await self.db.execute(stmt)).scalar_one()
+        uid = identity.user_id
+
+    full_user = await self._get_full_user(uid)
+    tokens = await self.create_tokens(full_user, request)
+    await self.db.commit()
+    return tokens
 
     # --- TELEFON VA VERIFIKATSIYA ---
 
