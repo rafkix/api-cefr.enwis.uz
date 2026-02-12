@@ -22,12 +22,16 @@ async def cmd_start(message: types.Message, command: CommandObject, state: FSMCo
 
     # 2. Argumentlarni tahlil qilish
     if args:
-        # A. SMS kod berish holati (sms_998901234567)
-        if args.startswith("sms_"):
-            phone = normalize_phone(args.replace("sms_", ""))
+        # A & C. Telefon raqami kelganda (sms_998... yoki shunchaki 998...)
+        # Raqamni tozalab olamiz
+        potential_phone = args.replace("sms_", "").split("_")[0]
+        
+        if potential_phone.isdigit() and len(potential_phone) >= 9:
+            phone = normalize_phone(potential_phone)
             otp_code = generate_otp()
             
             async with AsyncSessionLocal() as db:
+                # Eskirgan yoki avvalgi kodlarni o'chirish (ixtiyoriy, tartib uchun)
                 db.add(VerificationCode(
                     value=phone,
                     code=otp_code,
@@ -38,7 +42,8 @@ async def cmd_start(message: types.Message, command: CommandObject, state: FSMCo
             
             return await message.answer(
                 f"🔢 Tasdiqlash kodingiz: <code>{otp_code}</code>\n\n"
-                f"Uni saytdagi maydonga kiriting. Amal qilish muddati: 5 daqiqa.",
+                f"Ushbu kodni <b>{phone}</b> raqami uchun saytdagi maydonga kiriting.\n"
+                f"⌛ Amal qilish muddati: 5 daqiqa.",
                 parse_mode="HTML"
             )
 
@@ -50,40 +55,18 @@ async def cmd_start(message: types.Message, command: CommandObject, state: FSMCo
                 reply_markup=get_contact_keyboard()
             )
 
-        # C. Raqam va UserID ni bog'lash holati (998901234567_102)
-        # "_" belgisi orqali ajratamiz
-        parts = args.split("_")
-        potential_phone = parts[0]
-        
-        if potential_phone.isdigit() and len(potential_phone) >= 9:
-            phone = normalize_phone(potential_phone)
-            # Agar "_" dan keyin ID kelsa, uni saqlaymiz (masalan: 102)
-            extra_user_id = parts[1] if len(parts) > 1 else None
-            
-            await state.update_data(
-                login_phone=phone,
-                external_user_id=extra_user_id
-            )
-            
-            await state.set_state(AuthFlow.waiting_contact_login)
-            return await message.answer(
-                f"🤝 {phone} raqamini profilingizga bog'lash va tasdiqlash uchun "
-                f"pastdagi tugma orqali kontaktingizni yuboring:", 
-                reply_markup=get_contact_keyboard()
-            )
-
-        # D. Oddiy tasdiqlash (verify_phone)
+        # D. Oddiy tasdiqlash so'rovi (agar raqamsiz kelsa)
         if args == "verify_phone":
             await state.set_state(AuthFlow.waiting_contact_login)
             return await message.answer(
-                "📱 Telefon raqamingizni tasdiqlash uchun kontaktingizni yuboring:", 
+                "📱 Telefon raqamingizni tasdiqlash uchun pastdagi tugma orqali kontaktingizni yuboring:", 
                 reply_markup=get_contact_keyboard()
             )
 
-    # 3. Argument yo'q bo'lsa yoki shunchaki kirgan bo'lsa
+    # 3. Argument yo'q bo'lsa yoki noto'g'ri argument bo'lsa
     await message.answer(
         f"Xush kelibsiz, {message.from_user.first_name}!\n"
-        "Profilingizni boshqarish uchun saytdan foydalaning.", 
+        "Profilingizni tasdiqlash yoki boshqarish uchun saytimizdan foydalaning.", 
         reply_markup=get_main_keyboard()
     )
 

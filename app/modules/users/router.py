@@ -46,7 +46,7 @@ async def create_avatar(
 
 # --- SECTION: CONTACTS ---
 
-@router.post("/contacts")
+@router.post("/contacts_add")
 async def add_contact_start_api(
     payload: schemas.AddContactSchema, 
     user: User = Depends(get_current_user), 
@@ -59,19 +59,6 @@ async def add_contact_start_api(
         contact_type=payload.type
     )
 
-@router.post("/contacts/verify")
-async def verify_contact_creation(
-    data: schemas.AddContactVerify,
-    user: User = Depends(get_current_user),
-    service: USERService = Depends(get_service)
-):
-    """OTPni tasdiqlash va kontaktni saqlash."""
-    return await service.add_contact_verify(
-        user_id=user.id, 
-        value=data.value, 
-        code=data.code, 
-        contact_type=data.type
-    )
 
 @router.get("/contacts", response_model=List[schemas.ContactResponse])
 async def read_my_contacts(

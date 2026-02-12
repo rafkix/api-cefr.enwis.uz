@@ -37,46 +37,42 @@ class USERService:
         )
         return list(result.scalars().all())
 
-    # --- CREATE (Contact & Avatar) ---
+
+    # --- IMPROVED: No Verification Code, Just Bot Link ---
     async def add_contact_start(self, user_id: int, value: str, contact_type: str):
-        # BU YERDA: VerificationCode jadvalida 'purpose' enum bo'lsa, 
-        # uning qiymati to'g'ri ekanligini tekshiring
-        
-        existing = await self.db.execute(select(UserContact).where(UserContact.value == value))
-        if existing.scalar_one_or_none():
-            raise HTTPException(400, "Bu kontakt allaqachon mavjud")
-
-        code = str(secrets.randbelow(900000) + 100000)
-        
-        # Eskilarini to'g'ri o'chirish (target = value bo'yicha)
-        await self.db.execute(delete(VerificationCode).where(VerificationCode.target == value))
-        
-        new_verification = VerificationCode(
-            target=value, 
-            code=code, 
-            purpose=VerificationPurpose.ADD_CONTACT, # Enum to'g'riligini tekshiring
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)
+        # 1. Tekshiramiz: Bu raqam allaqachon biror foydalanuvchida bormi?
+        existing = await self.db.execute(
+            select(UserContact).where(UserContact.value == value)
         )
-        
-        self.db.add(new_verification)
-        await self.db.commit()
-        return {"message": "Kod yuborildi", "debug_code": code}
-    
-    
-    async def add_contact_verify(self, user_id: int, value: str, code: str, contact_type: str):
-        stmt = select(VerificationCode).where(
-            VerificationCode.target == value, VerificationCode.code == code, VerificationCode.is_used == False
-        )
-        v_code = (await self.db.execute(stmt)).scalar_one_or_none()
-        if not v_code or v_code.expires_at < datetime.now(timezone.utc):
-            raise HTTPException(400, "Kod xato yoki muddati o'tgan")
+        contact = existing.scalar_one_or_none()
 
-        async with self.db.begin_nested():
-            new_contact = UserContact(user_id=user_id, contact_type=contact_type, value=value, is_verified=True)
+        if contact:
+            if contact.user_id != user_id:
+                # Raqam boshqa odamga tegishli
+                raise HTTPException(400, "Bu raqam boshqa profilga biriktirilgan")
+            if contact.is_verified:
+                # Raqam o'ziga tegishli va allaqachon tasdiqlangan
+                return {"message": "Raqam allaqachon tasdiqlangan", "status": "verified"}
+        else:
+            # 2. Agar raqam bazada bo'lmasa, uni tasdiqlanmagan (is_verified=False) holatda yaratamiz
+            new_contact = UserContact(
+                user_id=user_id,
+                contact_type=contact_type,
+                value=value,
+                is_verified=False
+            )
             self.db.add(new_contact)
-            v_code.is_used = True
-        await self.db.commit()
-        return {"message": "Kontakt qo'shildi"}
+            await self.db.commit()
+
+        # 3. Foydalanuvchiga Telegram bot linkini qaytaramiz
+        # Agar raqam bazada bo'lsa, shunchaki verify_phone linkini beramiz
+        bot_link = "https://t.me/EnwisAuthBot?start=verify_phone"
+        
+        return {
+            "message": "Raqam saqlandi, bot orqali tasdiqlang",
+            "bot_link": bot_link,
+            "status": "pending_verification"
+        }
 
     # --- UPDATE (Profile & Primary Status) ---
     async def update_profile(self, user_id: int, data: schemas.ProfileUpdate):
