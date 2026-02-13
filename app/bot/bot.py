@@ -106,75 +106,54 @@ Imtihonga tayyorgarlikni bugundan boshlang 💪🔥
 ]
 
 ADMIN_USERNAME = "bekime06"
+BATCH_SIZE = 5 # Xavfsizlik uchun kamaytirdik
+MIN_DELAY = 30
+MAX_DELAY = 60
 
-BATCH_SIZE = 10
-MIN_DELAY = 60
-MAX_DELAY = 180
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# ===== LOGGING =====
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
-# ===== MAIN FUNCTION =====
 async def send_posts():
-    async with TelegramClient("session", api_id, api_hash) as client:
+    client = TelegramClient("my_account_session", api_id, api_hash)
+    await client.start() # Bu yerda kod so'rashi mumkin
+    
+    sent_count = 0
+    error_count = 0
 
-        sent_count = 0
-        error_count = 0
+    for gid in GROUP_IDS:
+        try:
+            entity = await client.get_entity(gid)
+            # Faqat oxirgi faol 50 ta odamni olish (Spamdan qochish uchun)
+            async for user in client.iter_participants(entity, limit=100):
+                if user.bot: continue # Botlarga yubormaymiz
 
-        for gid in GROUP_IDS:
+                try:
+                    text = random.choice(POST_VARIANTS)
+                    await client.send_message(user.id, text)
+                    sent_count += 1
+                    logging.info(f"Yuborildi: {user.id}")
+                    
+                    # Har bir xabardan keyin kutish
+                    await asyncio.sleep(random.randint(MIN_DELAY, MAX_DELAY))
 
-            # Stop flag tekshirish
-            try:
-                with open("stop.txt"):
-                    logging.info("Stop flag topildi. To‘xtaymiz.")
-                    await client.send_message(
-                        ADMIN_USERNAME,
-                        "⛔ Jarayon stop.txt orqali to‘xtatildi."
-                    )
-                    break
-            except FileNotFoundError:
-                pass
+                    if sent_count % BATCH_SIZE == 0:
+                        pause = random.randint(300, 600)
+                        logging.info(f"Batch tugadi. {pause} soniya dam...")
+                        await client.send_message(ADMIN_USERNAME, f"Batch tugadi. {pause} soniya dam...")
+                        await asyncio.sleep(pause)
 
-            try:
-                text = random.choice(POST_VARIANTS)
+                except UserPrivacyRestrictedError:
+                    logging.warning("Foydalanuvchi shaxsiy xabarlarni yopib qo'ygan.")
+                except FloodWaitError as e:
+                    logging.error(f"FloodWait: {e.seconds} soniya kutish kerak.")
+                    await asyncio.sleep(e.seconds)
+                except Exception as e:
+                    logging.error(f"Kichik xato: {e}")
 
-                await client.send_message(gid, text)
-                sent_count += 1
+        except Exception as e:
+            logging.error(f"Guruhda xatolik: {e}")
 
-                logging.info(f"{gid} yuborildi")
+    await client.send_message(ADMIN_USERNAME, f"Tugadi. Yuborildi: {sent_count}")
+    await client.disconnect()
 
-                # oddiy delay
-                delay = random.randint(MIN_DELAY, MAX_DELAY)
-                await asyncio.sleep(delay)
-
-                # batch pause
-                if sent_count % BATCH_SIZE == 0:
-                    big_pause = random.randint(600, 1800)
-                    logging.info(f"{BATCH_SIZE} ta yuborildi. {big_pause}s dam.")
-                    await asyncio.sleep(big_pause)
-
-            except FloodWaitError as e:
-                logging.warning(f"FloodWait: {e.seconds}s kutamiz")
-                await asyncio.sleep(e.seconds)
-
-            except ChatWriteForbiddenError:
-                logging.warning(f"Yozishga ruxsat yo‘q: {gid}")
-                error_count += 1
-
-            except Exception as e:
-                logging.error(f"Xatolik: {e}")
-                error_count += 1
-
-        # Jarayon tugaganda admin notify
-        await client.send_message(
-            ADMIN_USERNAME,
-            f"✅ Jarayon tugadi.\n\nYuborildi: {sent_count}\nXatoliklar: {error_count}"
-        )
-
-
-# ===== ENTRY =====
 if __name__ == "__main__":
     asyncio.run(send_posts())
