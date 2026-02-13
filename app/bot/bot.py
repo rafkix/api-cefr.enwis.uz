@@ -114,45 +114,84 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 async def send_posts():
     client = TelegramClient("my_account_session", api_id, api_hash)
-    await client.start() # Bu yerda kod so'rashi mumkin
+    await client.start()
     
     sent_count = 0
     error_count = 0
+    
+    # 1. Adminga boshlang'ich hisobot xabarini yuboramiz
+    status_msg = await client.send_message(
+        ADMIN_USERNAME, 
+        "🚀 **Reklama jarayoni boshlanmoqda...**"
+    )
 
     for gid in GROUP_IDS:
         try:
             entity = await client.get_entity(gid)
-            # Faqat oxirgi faol 50 ta odamni olish (Spamdan qochish uchun)
+            # Guruh nomini olish
+            group_title = entity.title if hasattr(entity, 'title') else str(gid)
+            
             async for user in client.iter_participants(entity, limit=100):
-                if user.bot: continue # Botlarga yubormaymiz
+                if user.bot: continue
 
                 try:
                     text = random.choice(POST_VARIANTS)
                     await client.send_message(user.id, text)
                     sent_count += 1
+                    
+                    # Foydalanuvchi nomi (agar bo'lsa)
+                    user_name = f"@{user.username}" if user.username else f"{user.first_name}"
+                    
+                    # 2. Adminga yuborilgan xabarni EDIT qilish
+                    report_text = (
+                        f"📊 **Jonli Hisobot**\n\n"
+                        f"✅ Yuborildi: `{sent_count}`\n"
+                        f"❌ Xatoliklar: `{error_count}`\n"
+                        f"📍 Guruh: *{group_title}*\n"
+                        f"👤 Oxirgi: {user_name} (`{user.id}`)\n\n"
+                        f"🕒 Keyingi xabar tayyorlanmoqda..."
+                    )
+                    await client.edit_message(ADMIN_USERNAME, status_msg.id, report_text)
+                    
                     logging.info(f"Yuborildi: {user.id}")
                     
-                    # Har bir xabardan keyin kutish
-                    await asyncio.sleep(random.randint(MIN_DELAY, MAX_DELAY))
+                    # Tasodifiy kutish
+                    wait_time = random.randint(MIN_DELAY, MAX_DELAY)
+                    await asyncio.sleep(wait_time)
 
+                    # Batch (to'xtalish) vaqti
                     if sent_count % BATCH_SIZE == 0:
                         pause = random.randint(300, 600)
-                        logging.info(f"Batch tugadi. {pause} soniya dam...")
-                        await client.send_message(ADMIN_USERNAME, f"Batch tugadi. {pause} soniya dam...")
+                        logging.info(f"Batch pauza: {pause}s")
+                        
+                        await client.edit_message(
+                            ADMIN_USERNAME, 
+                            status_msg.id, 
+                            report_text + f"\n\n☕ **Pauza ketmoqda: {pause} soniya...**"
+                        )
                         await asyncio.sleep(pause)
 
                 except UserPrivacyRestrictedError:
-                    logging.warning("Foydalanuvchi shaxsiy xabarlarni yopib qo'ygan.")
+                    error_count += 1
+                    logging.warning("Maxfiylik cheklovi sababli yuborilmadi.")
                 except FloodWaitError as e:
-                    logging.error(f"FloodWait: {e.seconds} soniya kutish kerak.")
+                    logging.error(f"FloodWait: {e.seconds}s")
+                    await client.send_message(ADMIN_USERNAME, f"⚠️ FloodWait: {e.seconds} soniya blok tushdi. Kutamiz...")
                     await asyncio.sleep(e.seconds)
                 except Exception as e:
+                    error_count += 1
                     logging.error(f"Kichik xato: {e}")
 
         except Exception as e:
             logging.error(f"Guruhda xatolik: {e}")
 
-    await client.send_message(ADMIN_USERNAME, f"Tugadi. Yuborildi: {sent_count}")
+    # 3. Yakuniy hisobot
+    final_text = (
+        f"✅ **Jarayon yakunlandi!**\n\n"
+        f"Jami muvaffaqiyatli: `{sent_count}`\n"
+        f"Jami xatoliklar: `{error_count}`"
+    )
+    await client.edit_message(ADMIN_USERNAME, status_msg.id, final_text)
     await client.disconnect()
 
 if __name__ == "__main__":
