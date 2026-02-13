@@ -1,10 +1,11 @@
 import asyncio
 import random
+import logging
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, ChatWriteForbiddenError
 
-api_id = 123456
-api_hash = "API_HASH"
+api_id = 32844127
+api_hash = "680be0244466d6be0195e23c31a9f0f2"
 
 # int bo‘lishi shart
 GROUP_IDS = [
