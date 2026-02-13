@@ -145,7 +145,7 @@ async def send_posts():
                             add_phone_privacy_exception=False
                         ))
                         logging.info(f"Kontaktga qo'shildi: {user.id}")
-                        await asyncio.sleep(5) # Kontaktga qo'shgach kichik tanaffus
+                        await asyncio.sleep(2) # Kontaktga qo'shgach kichik tanaffus
                     except Exception as ce:
                         logging.warning(f"Kontaktga qo'shishda muammo (o'tkazib yuboramiz): {ce}")
 
