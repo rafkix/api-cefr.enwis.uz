@@ -2,7 +2,8 @@ import asyncio
 import random
 import logging
 from telethon import TelegramClient
-from telethon.errors import FloodWaitError, ChatWriteForbiddenError
+from telethon.errors import FloodWaitError, ChatWriteForbiddenError, UserPrivacyRestrictedError
+from telethon.tl.functions.contacts import AddContactRequest
 
 api_id = 32844127
 api_hash = "680be0244466d6be0195e23c31a9f0f2"
@@ -119,78 +120,85 @@ async def send_posts():
     sent_count = 0
     error_count = 0
     
-    # 1. Adminga boshlang'ich hisobot xabarini yuboramiz
+    # 1. Adminga boshlang'ich hisobot xabari
     status_msg = await client.send_message(
         ADMIN_USERNAME, 
-        "🚀 **Reklama jarayoni boshlanmoqda...**"
+        "🚀 **Reklama jarayoni va kontaktga qo'shish boshlandi...**"
     )
 
     for gid in GROUP_IDS:
         try:
             entity = await client.get_entity(gid)
-            # Guruh nomini olish
             group_title = entity.title if hasattr(entity, 'title') else str(gid)
             
             async for user in client.iter_participants(entity, limit=100):
                 if user.bot: continue
 
                 try:
+                    # --- KONTAKTGA QO'SHISH ---
+                    try:
+                        await client(AddContactRequest(
+                            id=user.id,
+                            first_name=user.first_name if user.first_name else "User",
+                            last_name="",
+                            phone='', 
+                            add_phone_privacy_exception=False
+                        ))
+                        logging.info(f"Kontaktga qo'shildi: {user.id}")
+                        await asyncio.sleep(5) # Kontaktga qo'shgach kichik tanaffus
+                    except Exception as ce:
+                        logging.warning(f"Kontaktga qo'shishda muammo (o'tkazib yuboramiz): {ce}")
+
+                    # --- XABAR YUBORISH ---
                     text = random.choice(POST_VARIANTS)
                     await client.send_message(user.id, text)
                     sent_count += 1
                     
-                    # Foydalanuvchi nomi (agar bo'lsa)
                     user_name = f"@{user.username}" if user.username else f"{user.first_name}"
                     
-                    # 2. Adminga yuborilgan xabarni EDIT qilish
+                    # 2. Hisobotni yangilash
                     report_text = (
                         f"📊 **Jonli Hisobot**\n\n"
                         f"✅ Yuborildi: `{sent_count}`\n"
                         f"❌ Xatoliklar: `{error_count}`\n"
                         f"📍 Guruh: *{group_title}*\n"
-                        f"👤 Oxirgi: {user_name} (`{user.id}`)\n\n"
-                        f"🕒 Keyingi xabar tayyorlanmoqda..."
+                        f"👤 Oxirgi kontakt: {user_name}\n\n"
+                        f"🕒 Keyingi foydalanuvchi qidirilmoqda..."
                     )
                     await client.edit_message(ADMIN_USERNAME, status_msg.id, report_text)
                     
-                    logging.info(f"Yuborildi: {user.id}")
+                    logging.info(f"Xabar ketdi: {user.id}")
                     
-                    # Tasodifiy kutish
+                    # Navbatdagi kutish
                     wait_time = random.randint(MIN_DELAY, MAX_DELAY)
                     await asyncio.sleep(wait_time)
 
-                    # Batch (to'xtalish) vaqti
+                    # Katta tanaffus (Batch pause)
                     if sent_count % BATCH_SIZE == 0:
-                        pause = random.randint(300, 600)
-                        logging.info(f"Batch pauza: {pause}s")
-                        
+                        pause = random.randint(600, 1200)
                         await client.edit_message(
                             ADMIN_USERNAME, 
                             status_msg.id, 
-                            report_text + f"\n\n☕ **Pauza ketmoqda: {pause} soniya...**"
+                            report_text + f"\n\n☕ **Batch pauza: {pause//60} daqiqa dam...**"
                         )
                         await asyncio.sleep(pause)
 
                 except UserPrivacyRestrictedError:
                     error_count += 1
-                    logging.warning("Maxfiylik cheklovi sababli yuborilmadi.")
+                    logging.warning(f"Maxfiylik cheklovi: {user.id}")
                 except FloodWaitError as e:
                     logging.error(f"FloodWait: {e.seconds}s")
-                    await client.send_message(ADMIN_USERNAME, f"⚠️ FloodWait: {e.seconds} soniya blok tushdi. Kutamiz...")
+                    await client.send_message(ADMIN_USERNAME, f"⚠️ FloodWait: {e.seconds}s blok. Kutamiz...")
                     await asyncio.sleep(e.seconds)
                 except Exception as e:
                     error_count += 1
-                    logging.error(f"Kichik xato: {e}")
+                    logging.error(f"Xatolik: {e}")
 
         except Exception as e:
-            logging.error(f"Guruhda xatolik: {e}")
+            logging.error(f"Guruhni o'qishda xatolik: {e}")
 
-    # 3. Yakuniy hisobot
-    final_text = (
-        f"✅ **Jarayon yakunlandi!**\n\n"
-        f"Jami muvaffaqiyatli: `{sent_count}`\n"
-        f"Jami xatoliklar: `{error_count}`"
-    )
+    # 3. Yakunlash
+    final_text = f"✅ **Jarayon tugadi!**\n\nJami: {sent_count}\nXatolar: {error_count}"
     await client.edit_message(ADMIN_USERNAME, status_msg.id, final_text)
     await client.disconnect()
 
