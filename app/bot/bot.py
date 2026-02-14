@@ -107,7 +107,7 @@ Imtihonga tayyorgarlikni bugundan boshlang 💪🔥
 ]
 
 ADMIN_USERNAME = "bekime06"
-BATCH_SIZE = 5
+BATCH_SIZE = 50
 MIN_DELAY = 30
 MAX_DELAY = 50
 SENT_USERS_FILE = "sent_users.txt"  # Yuborilganlar ro'yxati saqlanadigan fayl
@@ -138,12 +138,12 @@ async def admin_handler(event):
     global is_paused, waiting_for_admin
     msg = event.text.lower()
     
-    if "start" in msg:
+    if "/stop" in msg:
         is_paused = True
         waiting_for_admin = False
         await event.reply("⛔ **Jarayon to'xtatildi va 5 daqiqa kutish rejimiga o'tildi.**")
     
-    elif "stop" in msg:
+    elif "/start" in msg:
         is_paused = False
         waiting_for_admin = False
         await event.reply("🚀 **Jarayon qayta boshlandi!**")
@@ -184,7 +184,7 @@ async def send_posts():
                             last_name="", phone='', 
                             add_phone_privacy_exception=False
                         ))
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(3)
                     except: pass
 
                     # Xabar yuborish
