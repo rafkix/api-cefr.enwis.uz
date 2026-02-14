@@ -167,10 +167,13 @@ async def ai_responder(event):
         try:
             async with client.action(event.chat_id, 'typing'):
                 response = await aclient.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[{"role": "system", "content": SYSTEM_PROMPT},
-                              {"role": "user", "content": event.text}],
-                    max_tokens=250
+                    model="gpt-3.5-turbo-1106", 
+                    response_format={"type": "json_object"},
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_text}
+                    ],
+                    temperature=0.3,
                 )
                 await asyncio.sleep(2) # Tabiiy ko'rinish uchun
                 await event.reply(response.choices[0].message.content)
