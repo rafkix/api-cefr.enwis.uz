@@ -28,8 +28,9 @@ SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
 SENT_USERS_FILE = os.path.join(BASE_DIR, "sent_users.txt")
 
 # Prompt va limit sozlamalari
-MIN_DELAY, MAX_DELAY = 250, 450
-BATCH_SIZE = 50 
+MIN_DELAY = 60   # 1 daqiqa (60 soniya)
+MAX_DELAY = 120  # 3 daqiqa (180 soniya)
+BATCH_SIZE = 50  # Har 40 tadan keyin admin ruxsatini kutadi
 IS_ADVERTISING = False
 waiting_for_admin = False
 is_paused = False
@@ -156,58 +157,74 @@ async def run_userbot(phone, api_id, api_hash):
         sent_count = 0
         while True:
             if not IS_ADVERTISING or is_paused:
-                if is_paused: await asyncio.sleep(300); is_paused = False
-                await asyncio.sleep(10); continue
+                if is_paused: 
+                    await asyncio.sleep(300) # Pauza vaqti 5 daqiqa
+                    is_paused = False
+                await asyncio.sleep(10)
+                continue
 
             sent_list = get_sent_users()
             async with aiosqlite.connect(DB_PATH) as db:
+                # Navbatdagi yuborilmagan userlarni olish
                 async with db.execute("SELECT user_id FROM target_users WHERE status='pending' LIMIT 50") as cur:
                     targets = await cur.fetchall()
                 async with db.execute("SELECT text FROM ads ORDER BY RANDOM() LIMIT 1") as cur_ad:
                     ad = await cur_ad.fetchone()
 
             if targets and ad:
+                # Fayldagi ro'yxatda yo'q userga yuborish
                 target_id = next((t[0] for t in targets if str(t[0]) not in sent_list), None)
+                
                 if target_id:
                     try:
-                        # Kontaktga qo'shish
+                        # 1. Kontaktga qo'shish (Xavfsizlik uchun)
                         try:
                             u_ent = await client.get_entity(target_id)
                             await client(AddContactRequest(
-                                id=target_id, first_name=u_ent.first_name or "User",
-                                last_name="", phone='', add_phone_privacy_exception=False
+                                id=target_id, 
+                                first_name=u_ent.first_name or "User",
+                                last_name="", phone='', 
+                                add_phone_privacy_exception=False
                             ))
-                            await asyncio.sleep(2)
-                        except: pass
+                            await asyncio.sleep(2) # Kontakt qo'shilgach qisqa tanaffus
+                        except:
+                            pass
 
-                        # Xabar yuborish
+                        # 2. Xabarni yuborish
                         await client.send_message(target_id, ad[0])
                         
-                        # Bazaga saqlash
+                        # 3. Natijani saqlash
                         async with aiosqlite.connect(DB_PATH) as db:
                             await db.execute("UPDATE target_users SET status='sent' WHERE user_id=?", (target_id,))
                             await db.commit()
-                        with open(SENT_USERS_FILE, "a") as f: f.write(f"{target_id}\n")
+                        
+                        with open(SENT_USERS_FILE, "a") as f:
+                            f.write(f"{target_id}\n")
                         
                         sent_count += 1
+                        
+                        # Adminni xabardor qilish
                         if sent_count % 5 == 0:
-                            await client.edit_message(ADMIN_USERNAME, status_msg.id, 
-                                f"📊 **Hisobot ({phone}):** `{sent_count}` ta xabar.\n"
-                                f"📍 Oxirgi ID: `{target_id}`")
+                            await client.send_message(ADMIN_USERNAME, f"📈 **Tezkor Hisobot:** `{sent_count}` ta xabar yuborildi.")
 
-                        # Limit tekshirish
+                        # 4. Limit nazorati
                         if sent_count % BATCH_SIZE == 0:
                             waiting_for_admin = True
-                            await client.send_message(ADMIN_USERNAME, f"⚠️ **Limit ({BATCH_SIZE}).**\nDavom etish uchun 'Boshla' deb yozing.")
-                            while waiting_for_admin: await asyncio.sleep(2)
+                            await client.send_message(ADMIN_USERNAME, f"⚠️ **Limitga yetdik ({BATCH_SIZE} ta).**\nDavom etish uchun 'Boshla' deb yozing.")
+                            while waiting_for_admin:
+                                await asyncio.sleep(2)
 
-                        await asyncio.sleep(random.randint(MIN_DELAY, MAX_DELAY))
-                    except (PeerFloodError, FloodWaitError):
-                        await client.send_message(ADMIN_USERNAME, f"🚨 {phone} spamga tushdi.")
+                        # 5. Tasodifiy kutish (Siz so'ragan 1-3 daqiqa)
+                        wait_time = random.randint(MIN_DELAY, MAX_DELAY)
+                        await asyncio.sleep(wait_time)
+
+                    except (PeerFloodError, FloodWaitError) as e:
+                        await client.send_message(ADMIN_USERNAME, f"🚨 **DIQQAT:** Akkaunt spam-limitga tushdi. To'xtatildi.")
                         break
-                    except UserPrivacyRestrictedError: pass
-                    except Exception: pass
-            await asyncio.sleep(20)
+                    except Exception:
+                        pass
+            
+            await asyncio.sleep(15) # Agar baza bo'sh bo'lsa kutish
 
     asyncio.create_task(scraper())
     asyncio.create_task(sender())
