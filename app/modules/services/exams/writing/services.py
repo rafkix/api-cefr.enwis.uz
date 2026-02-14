@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # OpenAI klientini sozlash
 # Agar API Key bo'lmasa, xatolik bermasligi uchun try/except yoki shunchaki client yaratish
-aclient = AsyncOpenAI(api_key="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")
+aclient = AsyncOpenAI(api_key="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")
 
 class WritingService:
     def __init__(self, db: AsyncSession):

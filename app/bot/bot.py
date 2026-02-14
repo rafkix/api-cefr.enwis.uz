@@ -8,7 +8,7 @@ from openai import AsyncOpenAI
 
 api_id = 32844127
 api_hash = "680be0244466d6be0195e23c31a9f0f2"
-aclient = AsyncOpenAI(api_key="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")
+aclient = AsyncOpenAI(api_key="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")
 
 # int bo‘lishi shart
 GROUP_IDS = [
