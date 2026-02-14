@@ -107,23 +107,30 @@ Imtihonga tayyorgarlikni bugundan boshlang 💪🔥
 ]
 
 ADMIN_USERNAME = "bekime06"
-BATCH_SIZE = 5 # Xavfsizlik uchun kamaytirdik
-MIN_DELAY = 30
-MAX_DELAY = 60
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
 BATCH_SIZE = 5
 MIN_DELAY = 30
-MAX_DELAY = 60
+MAX_DELAY = 50
+SENT_USERS_FILE = "sent_users.txt"  # Yuborilganlar ro'yxati saqlanadigan fayl
 
 # --- GLOBAL HOLATLAR ---
-is_paused = False  # Admin to'xtatganini bilish uchun
-waiting_for_admin = False # Admin javobini kutish uchun
+is_paused = False
+waiting_for_admin = False
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
 client = TelegramClient("my_account_session", api_id, api_hash)
+
+# --- FUNKSIYALAR: FOYDALANUVCHILARNI BOSHQARISH ---
+def get_sent_users():
+    """Fayldan yuborilgan user IDlarini o'qiydi"""
+    if not os.path.exists(SENT_USERS_FILE):
+        return set()
+    with open(SENT_USERS_FILE, "r") as f:
+        return set(line.strip() for line in f)
+
+def save_sent_user(user_id):
+    """Yangi yuborilgan user IDsini faylga qo'shadi"""
+    with open(SENT_USERS_FILE, "a") as f:
+        f.write(f"{user_id}\n")
 
 # --- ADMIN BUYRUQLARINI QABUL QILISH ---
 @client.on(events.NewMessage(chats=ADMIN_USERNAME))
@@ -131,22 +138,24 @@ async def admin_handler(event):
     global is_paused, waiting_for_admin
     msg = event.text.lower()
     
-    if "to'xtat" in msg or "stop" in msg:
+    if "start" in msg:
         is_paused = True
         waiting_for_admin = False
-        await event.reply("⛔ **Jarayon to'xtatildi va 5 daqiqa (300s) kutish rejimiga o'tildi.**")
+        await event.reply("⛔ **Jarayon to'xtatildi va 5 daqiqa kutish rejimiga o'tildi.**")
     
-    elif "boshla" in msg or "start" in msg:
+    elif "stop" in msg:
         is_paused = False
         waiting_for_admin = False
         await event.reply("🚀 **Jarayon qayta boshlandi!**")
 
+# --- ASOSIY JARAYON ---
 async def send_posts():
     global is_paused, waiting_for_admin
     await client.start()
     
     sent_count = 0
     error_count = 0
+    sent_users = get_sent_users() # Eski yuborilganlarni yuklash
     
     status_msg = await client.send_message(ADMIN_USERNAME, "🚀 **Userbot ishga tushdi.**")
 
@@ -155,38 +164,52 @@ async def send_posts():
             entity = await client.get_entity(gid)
             group_title = entity.title if hasattr(entity, 'title') else str(gid)
             
-            async for user in client.iter_participants(entity, limit=100):
-                # Admin to'xtatgan bo'lsa 5 daqiqa kutish
-                if is_paused:
-                    logging.info("Admin to'xtatdi. 5 daqiqa kutish...")
-                    await asyncio.sleep(300) 
-                    is_paused = False # Kutib bo'lgach avtomatik davom etishi mumkin
+            async for user in client.iter_participants(entity, limit=200):
+                # 1. Tekshirish: Userbot yoki oldin yuborilganmi?
+                if user.bot or str(user.id) in sent_users:
+                    continue
 
-                if user.bot: continue
+                # 2. Admin to'xtatgan bo'lsa 5 daqiqa kutish
+                if is_paused:
+                    logging.info("Pauza rejimi: 5 daqiqa...")
+                    await asyncio.sleep(200) 
+                    is_paused = False
 
                 try:
                     # Kontaktga qo'shish
                     try:
-                        sent_count += 1
-                        await client(AddContactRequest(id=user.id, first_name=user.first_name or "User", last_name=f"{sent_count}", phone='', add_phone_privacy_exception=False))
+                        await client(AddContactRequest(
+                            id=user.id, 
+                            first_name=user.first_name or "User", 
+                            last_name="", phone='', 
+                            add_phone_privacy_exception=False
+                        ))
                         await asyncio.sleep(2)
                     except: pass
 
                     # Xabar yuborish
                     await client.send_message(user.id, random.choice(POST_VARIANTS))
+                    
+                    # Saqlash
                     sent_count += 1
+                    sent_users.add(str(user.id))
+                    save_sent_user(user.id)
                     
                     user_name = f"@{user.username}" if user.username else f"{user.first_name}"
                     await client.edit_message(ADMIN_USERNAME, status_msg.id, 
-                        f"📊 **Hisobot:** `{sent_count}` ta ketdi.\n📍 Guruh: {group_title}\n👤 Oxirgi: {user_name}")
+                        f"📊 **Hisobot:** `{sent_count}` ta yangi xabar.\n"
+                        f"📍 Guruh: {group_title}\n"
+                        f"👤 Oxirgi: {user_name}\n"
+                        f"📚 Jami bazada: {len(sent_users)} ta user.")
 
-                    # --- BATCH LIMIT VA ADMIN BILAN MULOQOT ---
+                    # --- LIMIT VA ADMIN MULOQOTI ---
                     if sent_count % BATCH_SIZE == 0:
                         waiting_for_admin = True
                         await client.send_message(ADMIN_USERNAME, 
-                            f"⚠️ **Limitga yetdi ({sent_count}).**\n\nNima qilamiz?\n1. **'To'xtat'** - 5 daqiqa kutish.\n2. **'Boshla'** - Davom etish.")
+                            f"⚠️ **Limitga yetdi ({sent_count}).**\n\nNima qilamiz?\n"
+                            f"• **'To'xtat'** - 5 daqiqa kutish.\n"
+                            f"• **'Boshla'** - Davom etish.")
                         
-                        # Admin biror nima deguncha kutish (max 10 daqiqa kutadi, keyin davom etadi)
                         wait_timer = 0
                         while waiting_for_admin and wait_timer < 600:
                             await asyncio.sleep(1)
@@ -194,15 +217,17 @@ async def send_posts():
 
                     await asyncio.sleep(random.randint(MIN_DELAY, MAX_DELAY))
 
+                except UserPrivacyRestrictedError:
+                    continue
                 except FloodWaitError as e:
                     await asyncio.sleep(e.seconds)
-                except Exception as e:
+                except Exception:
                     error_count += 1
 
         except Exception as e:
             logging.error(f"Xato: {e}")
 
-    await client.send_message(ADMIN_USERNAME, "✅ Ish yakunlandi.")
+    await client.send_message(ADMIN_USERNAME, "✅ Barcha guruhlar ko'rib chiqildi.")
 
 if __name__ == "__main__":
     client.loop.run_until_complete(send_posts())
