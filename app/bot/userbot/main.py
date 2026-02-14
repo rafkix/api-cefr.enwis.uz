@@ -98,35 +98,39 @@ async def run_userbot(phone, api_id, api_hash):
         logging.error(f"Error {phone}: {e}")
         return
 
-    # 1. AI JAVOB BERUVCHI VA ADMIN BUYRUQLARI
     @client.on(events.NewMessage(incoming=True))
-    async def on_message(event):
-        global IS_ADVERTISING, waiting_for_admin, is_paused
-        if not event.is_private: return
-        
-        sender = await event.get_sender()
-        if sender.bot: return
+    async def ai_responder(event):
+        if event.is_private:
+            sender = await event.get_sender()
+            if not sender or sender.bot:
+                return
 
-        # Admin buyruqlari (Username orqali)
-        if sender.username and f"@{sender.username}" == ADMIN_USERNAME:
-            cmd = event.text.lower()
-            if "boshla" in cmd:
-                waiting_for_admin = False
-                await event.reply("▶️ Davom etamiz!")
-            elif "to'xtat" in cmd:
-                is_paused = True
-                await event.reply("⏸ Jarayon 5 daqiqaga to'xtatildi.")
-            return
+            # O'zingizga o'zingiz javob bermaslik uchun
+            me = await client.get_me()
+            if sender.id == me.id:
+                return
 
-        # Oddiy userlar uchun AI javob
-        try:
-            async with client.action(event.chat_id, 'typing'):
-                chat_completion = await groq_client.chat.completions.create(
-                    messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": event.text}],
-                    model="llama-3.3-70b-versatile"
-                )
-                await event.reply(chat_completion.choices[0].message.content)
-        except: pass
+            if event.text.lower() in ["/start", "/stop"]:
+                return
+
+            try:
+                async with client.action(event.chat_id, 'typing'):
+                    # Groq orqali Llama-3 modelidan foydalanamiz
+                    chat_completion = await groq_client.chat.completions.create(
+                        messages=[
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "user", "content": event.text}
+                        ],
+                        model="llama-3.3-70b-versatile", # Eng kuchli bepul model
+                        max_tokens=300
+                    )
+                    
+                    answer = chat_completion.choices[0].message.content
+                    await asyncio.sleep(2) 
+                    await event.reply(answer)
+                    
+            except Exception as e:
+                logging.error(f"Groq AI xatosi: {e}")
 
     # 2. SKANER (SCRAPER)
     async def scraper():
@@ -155,6 +159,8 @@ async def run_userbot(phone, api_id, api_hash):
     async def sender():
         global IS_ADVERTISING, waiting_for_admin, is_paused
         sent_count = 0
+        status_msg = None  # Hisobot xabarini saqlash uchun
+
         while True:
             if not IS_ADVERTISING or is_paused:
                 if is_paused: 
@@ -165,30 +171,25 @@ async def run_userbot(phone, api_id, api_hash):
 
             sent_list = get_sent_users()
             async with aiosqlite.connect(DB_PATH) as db:
-                # Navbatdagi yuborilmagan userlarni olish
                 async with db.execute("SELECT user_id FROM target_users WHERE status='pending' LIMIT 50") as cur:
                     targets = await cur.fetchall()
                 async with db.execute("SELECT text FROM ads ORDER BY RANDOM() LIMIT 1") as cur_ad:
                     ad = await cur_ad.fetchone()
 
             if targets and ad:
-                # Fayldagi ro'yxatda yo'q userga yuborish
                 target_id = next((t[0] for t in targets if str(t[0]) not in sent_list), None)
                 
                 if target_id:
                     try:
-                        # 1. Kontaktga qo'shish (Xavfsizlik uchun)
+                        # 1. Kontaktga qo'shish
                         try:
                             u_ent = await client.get_entity(target_id)
                             await client(AddContactRequest(
-                                id=target_id, 
-                                first_name=u_ent.first_name or "User",
-                                last_name="", phone='', 
-                                add_phone_privacy_exception=False
+                                id=target_id, first_name=u_ent.first_name or "User",
+                                last_name="", phone='', add_phone_privacy_exception=False
                             ))
-                            await asyncio.sleep(2) # Kontakt qo'shilgach qisqa tanaffus
-                        except:
-                            pass
+                            await asyncio.sleep(2)
+                        except: pass
 
                         # 2. Xabarni yuborish
                         await client.send_message(target_id, ad[0])
@@ -197,32 +198,47 @@ async def run_userbot(phone, api_id, api_hash):
                         async with aiosqlite.connect(DB_PATH) as db:
                             await db.execute("UPDATE target_users SET status='sent' WHERE user_id=?", (target_id,))
                             await db.commit()
-                        
                         with open(SENT_USERS_FILE, "a") as f:
                             f.write(f"{target_id}\n")
                         
                         sent_count += 1
                         
-                        # Adminni xabardor qilish
-                        if sent_count % 5 == 0:
-                            await client.send_message(ADMIN_USERNAME, f"📈 **Tezkor Hisobot:** `{sent_count}` ta xabar yuborildi.")
+                        # --- ADMINGA EDIT TEXT QILIB YUBORISH ---
+                        report_text = (f"📈 **Jonli Hisobot**\n\n"
+                                       f"📱 Akkaunt: `{phone}`\n"
+                                       f"✅ Yuborildi: `{sent_count}` ta\n"
+                                       f"👤 Oxirgi ID: `{target_id}`\n"
+                                       f"⏳ Holat: Faol...")
+                        
+                        if status_msg is None:
+                            # Birinchi marta yangi xabar yuboramiz
+                            status_msg = await client.send_message(ADMIN_USERNAME, report_text)
+                        else:
+                            # Keyingi safar o'sha xabarni tahrirlaymiz
+                            try:
+                                await client.edit_message(ADMIN_USERNAME, status_msg.id, report_text)
+                            except:
+                                # Agar xabar o'chib ketgan bo'lsa yangi ochamiz
+                                status_msg = await client.send_message(ADMIN_USERNAME, report_text)
 
                         # 4. Limit nazorati
                         if sent_count % BATCH_SIZE == 0:
                             waiting_for_admin = True
-                            await client.send_message(ADMIN_USERNAME, f"⚠️ **Limitga yetdik ({BATCH_SIZE} ta).**\nDavom etish uchun 'Boshla' deb yozing.")
+                            limit_text = f"⚠️ **Limitga yetdik ({BATCH_SIZE} ta).**\n\nDavom etish uchun 'Boshla' deb yozing."
+                            await client.edit_message(ADMIN_USERNAME, status_msg.id, limit_text)
                             while waiting_for_admin:
                                 await asyncio.sleep(2)
+                            # Davom etganda xabarni qayta yangilaymiz
+                            status_msg = await client.send_message(ADMIN_USERNAME, "▶️ Jarayon davom ettirilmoqda...")
 
-                        # 5. Tasodifiy kutish (Siz so'ragan 1-3 daqiqa)
+                        # 5. Tasodifiy kutish (1-3 daqiqa)
                         wait_time = random.randint(MIN_DELAY, MAX_DELAY)
                         await asyncio.sleep(wait_time)
 
-                    except (PeerFloodError, FloodWaitError) as e:
-                        await client.send_message(ADMIN_USERNAME, f"🚨 **DIQQAT:** Akkaunt spam-limitga tushdi. To'xtatildi.")
+                    except (PeerFloodError, FloodWaitError):
+                        await client.send_message(ADMIN_USERNAME, f"🚨 **DIQQAT:** {phone} spam-limitga tushdi.")
                         break
-                    except Exception:
-                        pass
+                    except Exception: pass
             
             await asyncio.sleep(15) # Agar baza bo'sh bo'lsa kutish
 
