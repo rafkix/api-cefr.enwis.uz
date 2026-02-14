@@ -108,7 +108,7 @@ Imtihonga tayyorgarlikni bugundan boshlang 💪🔥
 """
 ]
 
-system_prompt = """
+SYSTEM_PROMPT = """
 Siz cefr.enwis.uz platformasining professional yordamchisisiz. 
 Platforma vazifasi: CEFR imtihoniga (Reading, Listening) real formatda tayyorlash.
 Foydalanuvchi savol bersa (masalan: "Nima foydasi bor?", "Kim bu?", "Menga kerakmi?"), quyidagilarni ta'kidlang:
