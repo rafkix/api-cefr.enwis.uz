@@ -64,16 +64,16 @@ class Form(StatesGroup):
 
 # ================== BAZA BILAN ISHLASH (WAL REJIMIDA) ==================
 async def get_db():
-    db = await aiosqlite.connect(DB_PATH, timeout=30)
-    await db.execute("PRAGMA journal_mode=WAL")
-    return db
+    return aiosqlite.connect(DB_PATH, timeout=30)
 
 async def init_db():
-    async with await get_db() as db:
+    # await await xatosini oldini olish uchun
+    async with aiosqlite.connect(DB_PATH, timeout=30) as db:
+        await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("""CREATE TABLE IF NOT EXISTS accounts (
             phone TEXT PRIMARY KEY, ai_status INTEGER DEFAULT 0, ads_status INTEGER DEFAULT 0
         )""")
-        # Ustunlar mavjudligini tekshirish va qo'shish
+        # Ustunlarni tekshirish
         try: await db.execute("ALTER TABLE accounts ADD COLUMN ai_status INTEGER DEFAULT 0")
         except: pass
         try: await db.execute("ALTER TABLE accounts ADD COLUMN ads_status INTEGER DEFAULT 0")
