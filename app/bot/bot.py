@@ -1,6 +1,6 @@
 import asyncio
 import random
-import logging
+import logging, os
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError, ChatWriteForbiddenError, UserPrivacyRestrictedError
 from telethon.tl.functions.contacts import AddContactRequest
