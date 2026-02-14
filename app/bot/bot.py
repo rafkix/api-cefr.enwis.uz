@@ -4,9 +4,11 @@ import logging, os
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError, ChatWriteForbiddenError, UserPrivacyRestrictedError
 from telethon.tl.functions.contacts import AddContactRequest
+from openai import AsyncOpenAI
 
 api_id = 32844127
 api_hash = "680be0244466d6be0195e23c31a9f0f2"
+aclient = AsyncOpenAI(api_key="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")
 
 # int bo‘lishi shart
 GROUP_IDS = [
@@ -106,6 +108,16 @@ Imtihonga tayyorgarlikni bugundan boshlang 💪🔥
 """
 ]
 
+SYSTEM_PROMPT = """
+Siz cefr.enwis.uz platformasining professional yordamchisisiz. 
+Platforma vazifasi: CEFR imtihoniga (Reading, Listening) real formatda tayyorlash.
+Foydalanuvchi savol bersa (masalan: "Nima foydasi bor?", "Kim bu?", "Menga kerakmi?"), quyidagilarni ta'kidlang:
+1. Vaqtni tejash: Istalgan joyda online shug'ullanish mumkin.
+2. Real format: Imtihon atmosferasini his qilish.
+3. Bepul testlar: @enwis_uz kanalida foydali materiallar borligi.
+Javobingiz qisqa, samimiy va o'zbek tilida bo'lsin.
+"""
+
 ADMIN_USERNAME = "bekime06"
 BATCH_SIZE = 50
 MIN_DELAY = 30
@@ -131,6 +143,28 @@ def save_sent_user(user_id):
     """Yangi yuborilgan user IDsini faylga qo'shadi"""
     with open(SENT_USERS_FILE, "a") as f:
         f.write(f"{user_id}\n")
+        
+# ================== AI JAVOB BERISH QISMI ==================
+@client.on(events.NewMessage(incoming=True))
+async def ai_responder(event):
+    if event.is_private and not event.sender.bot:
+        # Agar admin "boshla" yoki "to'xtat" deb yozsa, AI aralashmaydi
+        if event.sender_id == (await client.get_me()).id or ADMIN_USERNAME in str(event.chat):
+            if event.text.lower() in ["/start", "/stop"]: return
+
+        try:
+            async with client.action(event.chat_id, 'typing'):
+                response = await openai_client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[{"role": "system", "content": SYSTEM_PROMPT},
+                              {"role": "user", "content": event.text}],
+                    max_tokens=250
+                )
+                await asyncio.sleep(2) # Tabiiy ko'rinish uchun
+                await event.reply(response.choices[0].message.content)
+        except Exception as e:
+            logging.error(f"AI xatosi: {e}")
+        
 
 # --- ADMIN BUYRUQLARINI QABUL QILISH ---
 @client.on(events.NewMessage(chats=ADMIN_USERNAME))
