@@ -171,7 +171,7 @@ async def ai_responder(event):
                     response_format={"type": "json_object"},
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_text}
+                        {"role": "user", "content": event.text}
                     ],
                     temperature=0.3,
                 )
