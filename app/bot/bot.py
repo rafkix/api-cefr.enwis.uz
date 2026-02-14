@@ -8,7 +8,7 @@ from openai import AsyncOpenAI
 
 api_id = 32844127
 api_hash = "680be0244466d6be0195e23c31a9f0f2"
-aclient = AsyncOpenAI(api_key="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")
+aclient = AsyncOpenAI(api_key="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")
 
 # int bo‘lishi shart
 GROUP_IDS = [
@@ -233,7 +233,7 @@ async def send_posts():
                             last_name="", phone='', 
                             add_phone_privacy_exception=False
                         ))
-                        await asyncio.sleep(3)
+                        await asyncio.sleep(5)
                     except: pass
 
                     # Xabar yuborish
