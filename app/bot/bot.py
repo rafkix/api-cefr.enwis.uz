@@ -166,7 +166,7 @@ async def ai_responder(event):
 
         try:
             async with client.action(event.chat_id, 'typing'):
-                response = await openai_client.chat.completions.create(
+                response = await aclient.chat.completions.create(
                     model="gpt-3.5-turbo",
                     messages=[{"role": "system", "content": SYSTEM_PROMPT},
                               {"role": "user", "content": event.text}],
