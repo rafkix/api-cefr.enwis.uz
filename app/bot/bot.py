@@ -4,11 +4,11 @@ import logging, os
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError, ChatWriteForbiddenError, UserPrivacyRestrictedError
 from telethon.tl.functions.contacts import AddContactRequest
-from openai import AsyncOpenAI
+from groq import AsyncGroq
 
 api_id = 32844127
 api_hash = "680be0244466d6be0195e23c31a9f0f2"
-aclient = AsyncOpenAI(api_key="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")
+groq_client = AsyncGroq(api_key="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")
 
 # int bo‘lishi shart
 GROUP_IDS = [
@@ -120,8 +120,8 @@ Javobingiz qisqa, samimiy va o'zbek tilida bo'lsin.
 
 ADMIN_USERNAME = "bekime06"
 BATCH_SIZE = 50
-MIN_DELAY = 30
-MAX_DELAY = 50
+MIN_DELAY = 60
+MAX_DELAY = 120
 SENT_USERS_FILE = "sent_users.txt"  # Yuborilganlar ro'yxati saqlanadigan fayl
 
 # --- GLOBAL HOLATLAR ---
@@ -148,37 +148,36 @@ def save_sent_user(user_id):
 @client.on(events.NewMessage(incoming=True))
 async def ai_responder(event):
     if event.is_private:
-        # Foydalanuvchi ma'lumotlarini olish
         sender = await event.get_sender()
-        
-        # Agar sender topilmasa yoki u bot bo'lsa, javob bermaymiz
         if not sender or sender.bot:
             return
 
-        # Agar admin o'zi yozayotgan bo'lsa, AI aralashmaydi
+        # O'zingizga o'zingiz javob bermaslik uchun
         me = await client.get_me()
         if sender.id == me.id:
             return
 
-        # Admin buyruqlarini tekshirish
         if event.text.lower() in ["/start", "/stop"]:
             return
 
         try:
             async with client.action(event.chat_id, 'typing'):
-                response = await aclient.chat.completions.create(
-                    model="gpt-3.5-turbo-1106", 
-                    response_format={"type": "json_object"},
+                # Groq orqali Llama-3 modelidan foydalanamiz
+                chat_completion = await groq_client.chat.completions.create(
                     messages=[
-                        {"role": "system", "content": system_prompt},
+                        {"role": "system", "content": SYSTEM_PROMPT},
                         {"role": "user", "content": event.text}
                     ],
-                    temperature=0.3,
+                    model="llama-3.3-70b-versatile", # Eng kuchli bepul model
+                    max_tokens=300
                 )
-                await asyncio.sleep(2) # Tabiiy ko'rinish uchun
-                await event.reply(response.choices[0].message.content)
+                
+                answer = chat_completion.choices[0].message.content
+                await asyncio.sleep(2) 
+                await event.reply(answer)
+                
         except Exception as e:
-            logging.error(f"AI xatosi: {e}")
+            logging.error(f"Groq AI xatosi: {e}")
         
 
 # --- ADMIN BUYRUQLARINI QABUL QILISH ---
@@ -221,7 +220,7 @@ async def send_posts():
                 # 2. Admin to'xtatgan bo'lsa 5 daqiqa kutish
                 if is_paused:
                     logging.info("Pauza rejimi: 5 daqiqa...")
-                    await asyncio.sleep(200) 
+                    await asyncio.sleep(300) 
                     is_paused = False
 
                 try:
