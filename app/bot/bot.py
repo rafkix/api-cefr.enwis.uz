@@ -147,10 +147,22 @@ def save_sent_user(user_id):
 # ================== AI JAVOB BERISH QISMI ==================
 @client.on(events.NewMessage(incoming=True))
 async def ai_responder(event):
-    if event.is_private and not event.sender.bot:
-        # Agar admin "boshla" yoki "to'xtat" deb yozsa, AI aralashmaydi
-        if event.sender_id == (await client.get_me()).id or ADMIN_USERNAME in str(event.chat):
-            if event.text.lower() in ["/start", "/stop"]: return
+    if event.is_private:
+        # Foydalanuvchi ma'lumotlarini olish
+        sender = await event.get_sender()
+        
+        # Agar sender topilmasa yoki u bot bo'lsa, javob bermaymiz
+        if not sender or sender.bot:
+            return
+
+        # Agar admin o'zi yozayotgan bo'lsa, AI aralashmaydi
+        me = await client.get_me()
+        if sender.id == me.id:
+            return
+
+        # Admin buyruqlarini tekshirish
+        if event.text.lower() in ["/start", "/stop"]:
+            return
 
         try:
             async with client.action(event.chat_id, 'typing'):
