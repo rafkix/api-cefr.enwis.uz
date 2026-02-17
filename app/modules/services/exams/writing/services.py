@@ -508,6 +508,7 @@ class WritingService:
                 # 3. CRITERIA JADVALI
                 crit = task_data.get("criteria", {})
                 elements.append(Paragraph(f"Scoring Details (Task Score: {task_data.get('score', 0)})", label_style))
+                elements.append(Spacer(1, 8*mm))
                 crit_data = [
                     [Paragraph("<b>Criteria</b>", text_style), Paragraph("<b>Score (1-4)</b>", text_style)],
                     ["Task Achievement", crit.get("taskAchievement", 0)],
@@ -530,6 +531,7 @@ class WritingService:
                 # 4. FEEDBACK
                 elements.append(Paragraph("AI Examiner Feedback:", label_style))
                 feedback_txt = task_data.get('feedback', 'No feedback provided.')
+                elements.append(Spacer(1, 8*mm))
                 elements.append(Paragraph(f"<i>{html.escape(feedback_txt)}</i>", block_style))
                 
                 # 5. SUGGESTIONS
