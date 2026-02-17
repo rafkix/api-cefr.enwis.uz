@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
+from app.modules.auth.dependencies import get_current_user, require_admin
 
 
 # Ichki modullardan importlar
@@ -57,16 +58,14 @@ async def delete_exam(exam_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/submit", response_model=WritingResultResponse)
 async def submit_writing_exam(
-    data: WritingSubmission, 
-    user_id: int, # Haqiqiy loyihada current_user dan olinadi
+    data: WritingSubmission, get_current_user
+    # user_id ni int emas, Dependency orqali olamiz
+    current_user: User = Depends(get_current_user), 
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Foydalanuvchi javoblarini topshirish va AI bahosini olish.
-    Response WritingResultResponse sxemasi asosida qaytadi (matnlar bilan birga).
-    """
     service = WritingService(db)
-    return await service.submit_exam_with_ai(user_id=user_id, data=data)
+    # current_user.id orqali haqiqiy foydalanuvchi ID sini yuboramiz
+    return await service.submit_exam_with_ai(user_id=current_user.id, data=data)
 
 @router.get("/results/user/{user_id}", response_model=List[WritingResultResponse])
 async def get_my_results(user_id: int, db: AsyncSession = Depends(get_db)):
