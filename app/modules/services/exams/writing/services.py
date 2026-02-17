@@ -487,7 +487,8 @@ class WritingService:
                             
                             full_question_content = "<br/><br/>".join(parts) if parts else full_question_content
                             break
-
+                elements.append(Spacer(1, 10*mm))
+                
                 # 1. Savol bloki
                 elements.append(Paragraph("Full Question / Prompt:", label_style))
                 formatted_q = html.escape(full_question_content).replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>").replace("&lt;br/&gt;", "<br/>").replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
