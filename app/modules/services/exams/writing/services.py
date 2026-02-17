@@ -389,7 +389,7 @@ class WritingService:
             return None
         
     async def generate_pdf_report(self, result) -> io.BytesIO:
-        """Natijani PDF shaklida professional dizaynda yaratish (Tuzatilgan versiya)"""
+        """Natijani PDF shaklida professional dizaynda yaratish (User Response qo'shilgan)"""
         try:
             buffer = io.BytesIO()
             
@@ -417,6 +417,7 @@ class WritingService:
             text_style = ParagraphStyle('Text', parent=styles['Normal'], fontSize=10, leading=14, alignment=4, spaceBefore=5, spaceAfter=5) 
             label_style = ParagraphStyle('Label', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', spaceBefore=10, spaceAfter=5)
             
+            # Savol va Feedback uchun fonli blok
             block_style = ParagraphStyle(
                 'Block', parent=styles['Normal'], fontSize=10, leading=14, 
                 leftIndent=5*mm, rightIndent=5*mm,
@@ -461,8 +462,7 @@ class WritingService:
                 elements.append(Paragraph(f"{task_name} ANALYSIS", section_style))
                 elements.append(HRFlowable(width="40%", thickness=2, color=colors.HexColor("#1e40af"), hAlign='LEFT', spaceAfter=10))
                 
-                # --- TOPIK VA SAVOL MATNINI BIRLASHTIRIB OLISH ---
-                # --- TOPIK VA SAVOL MATNINI BIRLASHTIRIB OLISH ---
+                # --- TOPIK VA SAVOL MATNINI TAYYORLASH ---
                 full_question_content = "Question content not available."
                 if result.exam and result.exam.tasks:
                     target_type = {
@@ -473,45 +473,35 @@ class WritingService:
                     
                     for t_obj in result.exam.tasks:
                         if t_obj.type == target_type:
-                            # Yo'riqnoma, Mavzu, Kontekst va So'zlar sonini birlashtirish
                             parts = []
-                            if t_obj.instruction: 
+                            if getattr(t_obj, 'instruction', None): 
                                 parts.append(f"<b>Instructions:</b><br/>{t_obj.instruction}")
-                            if t_obj.topic: 
-                                # Mavzu, ContextText va so'z chegaralarini chiroyli formatda qo'shish
-                                topic_part = f"<b>Topic:</b><br/>{t_obj.topic} <br/><i>{t_obj.context_text}</i>"
-                                if hasattr(t_obj, 'contextText') and t_obj.context_text:
-                                    topic_part += f"<br/><i>{t_obj.context_text}</i>"
+                            if getattr(t_obj, 'topic', None): 
+                                topic_txt = f"<b>Topic:</b><br/>{t_obj.topic}<br/> <br/> {t_obj.context_text}"
                                 
-                                topic_part += f"<br/><br/><b>Word Count:</b> Min: {t_obj.min_words} - Max: {t_obj.max_words}"
-                                parts.append(topic_part)
+                                # Word count
+                                min_w = getattr(t_obj, 'min_words', getattr(t_obj, 'minWords', 0))
+                                max_w = getattr(t_obj, 'max_words', getattr(t_obj, 'maxWords', 0))
+                                topic_txt += f"<br/><br/><b>Word Count:</b> Min: {min_w} - Max: {max_w}"
+                                parts.append(topic_txt)
                             
                             full_question_content = "<br/><br/>".join(parts) if parts else full_question_content
                             break
 
-                # --- SAVOL MATNI BLOKINI QO'SHISH (Yopishib qolishni oldini olish bilan) ---
-
-                # 1. Sarlavhadan oldin qo'shimcha bo'shliq
-                elements.append(Spacer(1, 8*mm)) 
-
-                # 2. "Full Question / Prompt" sarlavhasi
+                # 1. Savol bloki
                 elements.append(Paragraph("Full Question / Prompt:", label_style))
+                formatted_q = html.escape(full_question_content).replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>").replace("&lt;br/&gt;", "<br/>").replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
+                elements.append(Paragraph(formatted_q, block_style))
+                elements.append(Spacer(1, 8*mm))
 
-                # 3. Sarlavha va blok orasidagi kichik masofa
-                elements.append(Spacer(1, 3*mm)) 
-
-                # 4. Asosiy savol matni bloki (fondagi blok)
-                # html.escape qilinganda bizga kerakli <b> va <br/> teglari buzilmasligi uchun ularni qayta tiklaymiz
-                formatted_content = html.escape(full_question_content)\
-                    .replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")\
-                    .replace("&lt;br/&gt;", "<br/>").replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
-
-                elements.append(Paragraph(formatted_content, block_style))
-
-                # 5. Blokdan keyin keladigan element (masalan, Student's Response) orasidagi masofa
+                # 2. TALABA JAVOBI (Qo'shildi)
+                resp_id = {"task1.1": "1", "task1.2": "2", "task2": "3"}.get(task_key, task_key)
+                user_text = result.user_responses.get(resp_id, "Response not found.")
+                elements.append(Paragraph("Student's Submission:", label_style))
+                elements.append(Paragraph(html.escape(user_text).replace("\n", "<br/>"), text_style))
                 elements.append(Spacer(1, 10*mm))
-                                
-                # CRITERIA JADVALI
+                
+                # 3. CRITERIA JADVALI
                 crit = task_data.get("criteria", {})
                 elements.append(Paragraph(f"Scoring Details (Task Score: {task_data.get('score', 0)})", label_style))
                 crit_data = [
@@ -531,16 +521,14 @@ class WritingService:
                     ('TOPPADDING', (0, 0), (-1, -1), 8),
                 ]))
                 elements.append(ct)
-                elements.append(Spacer(1, 10*mm)) # Jadvaldan keyin bo'shliq
+                elements.append(Spacer(1, 10*mm))
 
-                # FEEDBACK
-                elements.append(Spacer(1, 8*mm)) 
+                # 4. FEEDBACK
                 elements.append(Paragraph("AI Examiner Feedback:", label_style))
                 feedback_txt = task_data.get('feedback', 'No feedback provided.')
-                elements.append(Spacer(1, 8*mm)) 
                 elements.append(Paragraph(f"<i>{html.escape(feedback_txt)}</i>", block_style))
                 
-                # SUGGESTIONS
+                # 5. SUGGESTIONS
                 suggestions = task_data.get("suggestions", [])
                 if suggestions:
                     elements.append(Spacer(1, 6*mm))
