@@ -11,10 +11,11 @@ from app.modules.users.router import router as user_router
 from app.modules.services.exams.mock.router import router as mock_router
 from app.modules.services.exams.reading.router import router as reading_router
 from app.modules.services.exams.listening.router import router as listening_router
+from app.modules.services.exams.writing.router import router as writing_router
 
 app = FastAPI(
     title="Cefr Enwis Backend API",
-    version="1.0.0",
+    version="2.5.0",
     description=(
         "Enwis is an educational platform created for learning foreign languages using AI. \n"
         "This API manages users, courses, exercises, AI translation, and gamification systems."
@@ -23,8 +24,8 @@ app = FastAPI(
 
 
 origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
+    "http://localhost:2006",
+    "http://127.0.0.1:2006",
     "https://enwis.uz",
     "https://app.enwis.uz",
     "https://api.enwis.uz",
@@ -41,6 +42,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # MUHIM: Mana shu qatorni qo'shing
+    expose_headers=["Content-Disposition"], 
 )
 
 app.add_middleware(
@@ -53,6 +56,7 @@ app.include_router(user_router, prefix="/api/v1")
 app.include_router(mock_router, prefix="/api/v1")
 app.include_router(reading_router, prefix="/api/v1")
 app.include_router(listening_router, prefix="/api/v1")
+app.include_router(writing_router, prefix="/api/v1")
 
 @app.on_event("startup")
 async def on_startup():

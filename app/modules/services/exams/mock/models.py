@@ -10,6 +10,7 @@ from app.core.database import Base
 # Bog'liq modellarni import
 from app.modules.services.exams.reading.models import ReadingTest
 from app.modules.services.exams.listening.models import ListeningExam
+from app.modules.services.exams.writing.models import WritingExam
 
 # --- ENUMS ---
 class SkillType(str, enum.Enum):
@@ -35,12 +36,13 @@ class MockExam(Base):
     # Foreign keys
     reading_id = Column(String, ForeignKey("reading_tests.id"), nullable=True)
     listening_id = Column(String, ForeignKey("listening_exams.id"), nullable=True)
-    writing_id = Column(String, nullable=True)
+    writing_id = Column(String, ForeignKey("writing_exams.id"), nullable=True) # QO'SHILDI
     speaking_id = Column(String, nullable=True)
 
     # Relationships
     reading_test = relationship("ReadingTest", viewonly=True, uselist=False)
     listening_test = relationship("ListeningExam", viewonly=True, uselist=False)
+    writing_test = relationship("WritingExam", viewonly=True, uselist=False) # QO'SHILDI
     attempts = relationship("MockExamAttempt", back_populates="exam", cascade="all, delete-orphan")
 
 # --- EXAM ATTEMPT ---

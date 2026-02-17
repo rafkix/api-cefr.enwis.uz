@@ -107,7 +107,7 @@ async def submit_skill_progress(
     attempt = await db.get(models.MockExamAttempt, attempt_id)
     if not attempt or attempt.user_id != user.id:
         raise HTTPException(status_code=403, detail="Ruxsat berilmagan")
-    return await services.submit_skill(db, attempt_id, skill, data)
+    return await services.submit_skill(db, attempt_id, skill, user_id=user.id)
 
 @router.post("/attempts/{attempt_id}/finish", response_model=schemas.MockExamResultResponse)
 async def finish_mock_exam_process(
