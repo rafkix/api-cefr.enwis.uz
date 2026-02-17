@@ -463,6 +463,7 @@ class WritingService:
                 elements.append(HRFlowable(width="40%", thickness=2, color=colors.HexColor("#1e40af"), hAlign='LEFT', spaceAfter=10))
                 
                 # --- TOPIK VA SAVOL MATNINI TAYYORLASH ---
+                elements.append(Spacer(1, 10*mm))
                 full_question_content = "Question content not available."
                 if result.exam and result.exam.tasks:
                     target_type = {
@@ -487,6 +488,8 @@ class WritingService:
                             
                             full_question_content = "<br/><br/>".join(parts) if parts else full_question_content
                             break
+                        
+                        
                 elements.append(Spacer(1, 10*mm))
                 
                 # 1. Savol bloki
