@@ -4,6 +4,7 @@ from annotated_types import T
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.modules.auth.models import User
 from typing import List
 from app.modules.auth.dependencies import get_current_user, require_admin
 
@@ -58,10 +59,9 @@ async def delete_exam(exam_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/submit", response_model=WritingResultResponse)
 async def submit_writing_exam(
-    data: WritingSubmission, get_current_user
-    # user_id ni int emas, Dependency orqali olamiz
-    current_user: User = Depends(get_current_user), 
-    db: AsyncSession = Depends(get_db)
+    data: WritingSubmission,  # <-- Bu yerdagi vergulni tekshiring
+    db: AsyncSession = Depends(get_db), # <-- Bu yerdagi vergulni tekshiring
+    current_user: User = Depends(get_current_user) # <-- Oxirgi argumentda vergul shart emas (lekin xato ham emas)
 ):
     service = WritingService(db)
     # current_user.id orqali haqiqiy foydalanuvchi ID sini yuboramiz
