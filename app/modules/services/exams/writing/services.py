@@ -463,7 +463,6 @@ class WritingService:
                 elements.append(HRFlowable(width="40%", thickness=2, color=colors.HexColor("#1e40af"), hAlign='LEFT', spaceAfter=10))
                 
                 # --- TOPIK VA SAVOL MATNINI TAYYORLASH ---
-                elements.append(Spacer(1, 10*mm))
                 full_question_content = "Question content not available."
                 if result.exam and result.exam.tasks:
                     target_type = {
@@ -494,6 +493,7 @@ class WritingService:
                 
                 # 1. Savol bloki
                 elements.append(Paragraph("Full Question / Prompt:", label_style))
+                elements.append(Spacer(1, 10*mm))
                 formatted_q = html.escape(full_question_content).replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>").replace("&lt;br/&gt;", "<br/>").replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
                 elements.append(Paragraph(formatted_q, block_style))
                 elements.append(Spacer(1, 8*mm))
