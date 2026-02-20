@@ -1,6 +1,8 @@
 from typing import List, Optional, Any
+from fastapi import HTTPException
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Enwis Cefr Backecnd"
@@ -27,6 +29,7 @@ class Settings(BaseSettings):
     COOKIE_HTTPONLY: bool = True
     COOKIE_DOMAIN: Optional[str] = ".enwis.uz"
     INTERNAL_API_TOKEN: str = "CHANGE_ME_INTERNAL_TOKEN"
+    GOOGLE_CLIENT_ID: str = "188374354192-l8rb2jp2pns0knsprtvis8f5ugl21c5n.apps.googleusercontent.com"
     
 
     model_config = SettingsConfigDict(
@@ -46,3 +49,5 @@ class Settings(BaseSettings):
         return []
 
 settings = Settings()
+
+
