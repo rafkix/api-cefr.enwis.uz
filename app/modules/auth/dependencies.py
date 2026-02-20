@@ -30,7 +30,7 @@ async def get_current_user(
     # 2. AuthService orqali foydalanuvchini barcha bog'liqliklari bilan olish
     service = AuthService(db)
     try:
-        user = await service._get_full_user(int(user_id))
+        user = await service._get_user_full(int(user_id))
     except HTTPException:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
