@@ -2,7 +2,7 @@ import os
 import uuid
 import shutil
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +29,29 @@ class UserService:
             select(User).where(User.id == user_id)
         )
         return result.scalar_one_or_none()
+
+    async def add_premium_subscription(
+        self,
+        user_id: int,
+        days: int
+    ) -> User:
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            raise HTTPException(404, "Foydalanuvchi topilmadi")
+
+        now = datetime.now(timezone.utc)
+
+        if user.premium_expires_at and user.premium_expires_at > now:
+            user.premium_expires_at = user.premium_expires_at + timedelta(days=days)
+        else:
+            user.premium_expires_at = now + timedelta(days=days)
+
+        user.is_premium = True
+
+        await self.db.commit()
+        await self.db.refresh(user)
+
+        return user
 
     # =====================================================
     # PROFILE

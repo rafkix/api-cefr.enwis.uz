@@ -1,13 +1,14 @@
 import logging
 import json
 from typing import List, Dict, Any, Optional
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, update, func
 from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
 
 # Loyihangizdagi ichki modullar
-from app.modules.services.exams.mock.models import MockExamResult
+from app.modules.services.exams.mock.models import MockExamResult, MockSkillAttempt, SkillType
+from app.modules.auth.models import User
 from groq import AsyncGroq
 
 # Modellaringiz va Sxemalaringiz
@@ -168,8 +169,40 @@ class WritingService:
     # ================================================================
     # 3. SUBMISSION & BAA 2025 OFFICIAL SCORING logic
     # ================================================================
+    async def _ensure_access(self, user_id: int, exam_id: str, attempt_id: Optional[int]):
+        if attempt_id:
+            return
+
+        user = await self.db.get(User, user_id)
+        if user and getattr(user, "is_premium", False):
+            return
+
+        free_count_stmt = select(func.count(WritingResult.id)).where(
+            WritingResult.user_id == user_id,
+            WritingResult.exam_id == exam_id,
+            WritingResult.exam_attempt_id.is_(None),
+        )
+        free_count = (await self.db.execute(free_count_stmt)).scalar_one()
+        if free_count >= 3:
+            raise HTTPException(403, "Writing bo'limida ushbu test uchun 3 ta tekin urinish tugadi. Davom etish uchun Premium obuna kerak.")
+
+    async def _update_mock_writing(self, attempt_id: int, score: float):
+        stmt = select(MockSkillAttempt).where(
+            MockSkillAttempt.attempt_id == attempt_id,
+            MockSkillAttempt.skill == SkillType.WRITING,
+        )
+        skill = (await self.db.execute(stmt)).scalar_one_or_none()
+        if skill:
+            skill.raw_score = score
+            skill.scaled_score = score
+            skill.cefr_level = "C1" if score >= 65 else "B2" if score >= 51 else "B1" if score >= 38 else "B1 dan quyi"
+            skill.is_checked = True
+            skill.submitted_at = datetime.utcnow()
+            await self.db.flush()
+
     async def submit_exam_with_ai(self, user_id: int, data: WritingSubmission):
         # 1. Imtihon ma'lumotlarini olish
+        await self._ensure_access(user_id=user_id, exam_id=data.exam_id, attempt_id=data.attempt_id)
         exam = await self.get_exam_by_id(data.exam_id)
         ai_evals = {}
         part1_scores = []  # Task 1.1 va 1.2 uchun
@@ -273,6 +306,10 @@ class WritingService:
         )
         
         self.db.add(result_record)
+
+        if data.attempt_id:
+            await self._update_mock_writing(data.attempt_id, final_scaled_score)
+
         await self.db.commit()
         await self.db.refresh(result_record)
 

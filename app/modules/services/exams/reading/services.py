@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import List, Optional, Tuple, Any
 
 from fastapi import HTTPException
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -23,6 +23,8 @@ from .models import (
     ReadingOption,
     ReadingResult,
 )
+from app.modules.auth.models import User
+
 from .schemas import (
     ReadingTestCreate,
     ReadingTestUpdate,
@@ -170,9 +172,27 @@ class ReadingService:
     # ================================================================
     #  3. JAVOBLARNI TEKSHIRISH (SUBMIT)
     # ================================================================
+    async def _ensure_access(self, user_id: int, exam_attempt_id: Optional[int]):
+        if exam_attempt_id:
+            return
+
+        user = await self.db.get(User, user_id)
+        if user and getattr(user, "is_premium", False):
+            return
+
+        free_count_stmt = select(func.count(ReadingResult.id)).where(
+            ReadingResult.user_id == user_id,
+            ReadingResult.exam_attempt_id.is_(None),
+        )
+        free_count = (await self.db.execute(free_count_stmt)).scalar_one()
+        if free_count >= 10:
+            raise HTTPException(403, "Reading bo'limida 10 ta tekin urinish tugadi. Davom etish uchun Premium obuna kerak.")
+
     async def submit_answers(self, user_id: int, test_id: str, data: ReadingSubmitRequest) -> ReadingResultDetailResponse:
         test = await self.get_test_by_id(test_id)
         if not test: raise HTTPException(404, "Test topilmadi")
+
+        await self._ensure_access(user_id=user_id, exam_attempt_id=data.exam_attempt_id)
 
         correct_count, total_count = 0, 0
         review_items: List[ReadingQuestionReview] = []
@@ -280,7 +300,8 @@ class ReadingService:
         )
         skill = (await self.db.execute(stmt)).scalar_one_or_none()
         if skill:
-            skill.score = score
+            skill.raw_score = score
+            skill.scaled_score = score
             skill.cefr_level = cefr_level
             skill.is_checked = True
             skill.submitted_at = datetime.now(timezone.utc)
@@ -297,7 +318,7 @@ class ReadingService:
             w = next(s for s in skills if s.skill == SkillType.WRITING)
             sp = next(s for s in skills if s.skill == SkillType.SPEAKING)
 
-            overall = round((r.score + l.score + w.score + sp.score) / 4, 2)
+            overall = round((r.scaled_score + l.scaled_score + w.scaled_score + sp.scaled_score) / 4, 2)
             
             # Yakuniy CEFR 
             final_cefr = "B1 dan quyi"
@@ -307,10 +328,10 @@ class ReadingService:
 
             self.db.add(MockExamResult(
                 attempt_id=exam_attempt_id,
-                reading_score=r.score, listening_score=l.score,
-                writing_score=w.score, speaking_score=sp.score,
-                overall_score=overall, cefr_level=final_cefr,
-                passed=overall >= 38, # B1 (38 ball) dan o'tgan hisoblanadi
+                user_id=r.user_id,
+                reading_ball=r.scaled_score, listening_ball=l.scaled_score,
+                writing_ball=w.scaled_score, speaking_ball=sp.scaled_score,
+                overall_score=overall, cefr_level=final_cefr
             ))
 
             attempt = await self.db.get(MockExamAttempt, exam_attempt_id)

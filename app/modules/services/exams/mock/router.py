@@ -129,7 +129,7 @@ async def buy_mock_exam(
 ):
     """Imtihonni sotib olish so'rovini yuborish."""
     await services.buy_exam_request(db, user.id, exam_id)
-    return {"message": "To'lov so'rovi yuborildi. Admin tasdiqlashini kuting."}
+    return {"message": "Bir martalik to'lov tasdiqlandi va mock faollashtirildi."}
 
 @router.get("/results/history", response_model=List[schemas.MockExamResultResponse])
 async def get_my_results_history(
