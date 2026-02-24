@@ -67,7 +67,7 @@ async def telegram_login(
 
 
 # =====================================================
-# SEND OTP
+# SEND OTP (WEB → SMS)
 # =====================================================
 
 @router.post(
@@ -78,7 +78,23 @@ async def send_otp(
     data: SendCodeRequest,
     service: AuthService = Depends(get_auth_service),
 ):
-    return await service.send_otp(data.phone)
+    # default = web → SMS yuboradi
+    return await service.send_otp(data.phone, source="web")
+
+# =====================================================
+# SEND OTP (BOT → NO SMS)
+# =====================================================
+    
+@router.post(
+    "/bot/send-otp",
+    status_code=status.HTTP_200_OK,
+)
+async def bot_send_otp(
+    data: SendCodeRequest,
+    service: AuthService = Depends(get_auth_service),
+):
+    # bot orqali → SMS bloklanadi
+    return await service.send_otp(data.phone, source="bot")
 
 
 # =====================================================

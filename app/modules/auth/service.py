@@ -1,3 +1,4 @@
+import logging
 import secrets
 import hashlib
 import hmac
@@ -5,6 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict
 
+import anyio
 from fastapi import HTTPException, Request, status
 from sqlalchemy import select, delete, and_, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +36,7 @@ from app.modules.auth.models import (
     ContactType,
     UserRole,
 )
+from app.modules.auth.sms import SmsService
 
 class AuthService:
     def __init__(self, db: AsyncSession):
@@ -42,6 +45,9 @@ class AuthService:
     # =====================================================
     # UTILS
     # =====================================================
+    OTP_EXPIRE_MINUTES = 5
+    OTP_RESEND_COOLDOWN_SECONDS = 60
+    OTP_MAX_ATTEMPTS = 5
 
     def _hash(self, value: str) -> str:
         return hashlib.sha256(value.encode()).hexdigest()
@@ -223,57 +229,144 @@ class AuthService:
     # PHONE & OTP
     # =====================================================
 
-    async def send_otp(self, phone: str) -> Dict:
+    def _hash(self, value: str) -> str:
+        return hashlib.sha256(value.encode()).hexdigest()
+
+    def _verify_hash(self, plain: str, hashed: str) -> bool:
+        return hmac.compare_digest(self._hash(plain), hashed)
+
+    async def send_otp(self, phone: str, source: str = "web") -> dict:
+        """
+        source:
+          - "web": SMS yuboradi
+          - "bot": SMS yubormaydi, faqat code qaytaradi (bot userga yuboradi)
+        """
+
         now = datetime.now(timezone.utc)
+
+        # 1) Cooldown tekshirish
         stmt = select(VerificationCode).where(
             VerificationCode.target == phone,
-            VerificationCode.created_at > now - timedelta(minutes=1)
+            VerificationCode.created_at >
+            now - timedelta(seconds=self.OTP_RESEND_COOLDOWN_SECONDS)
         )
-        if (await self.db.execute(stmt)).scalar_one_or_none():
-            raise HTTPException(429, "Juda tez-tez so'rov yuboryapsiz")
+        existing = (await self.db.execute(stmt)).scalar_one_or_none()
 
-        code = str(secrets.randbelow(9000) + 1000)
-        await self.db.execute(delete(VerificationCode).where(VerificationCode.target == phone))
+        if existing:
+            raise HTTPException(429, "Too many requests")
 
-        self.db.add(VerificationCode(
+        # 2) Kod yaratish
+        code = str(secrets.randbelow(900000) + 100000)
+
+        # 3) Eski kodlarni o'chirish
+        await self.db.execute(
+            delete(VerificationCode).where(VerificationCode.target == phone)
+        )
+
+        # 4) Yangi record
+        record = VerificationCode(
             target=phone,
             code_hash=self._hash(code),
-            expires_at=now + timedelta(minutes=5),
-        ))
+            expires_at=now + timedelta(minutes=self.OTP_EXPIRE_MINUTES),
+            failed_attempts=0,
+            is_used=False,
+            # created_at odatda default bilan qo'yiladi, bo'lmasa uncomment qil:
+            # created_at=now,
+        )
+        self.db.add(record)
         await self.db.commit()
-        return {"status": "sent", "debug_code": code if settings.DEBUG else None}
+
+        # 5) SMS matni (escape muammosiz)
+        message = f"NarxNav sayti orqali ro‘yxatdan o‘tish uchun tasdiqlash kodingiz: {code}"
+
+        # 6) BOT so'rasa: SMS yubormaymiz
+        if source == "bot":
+            # bot shu code'ni userga yuboradi
+            return {"status": "sent", "code": code}
+        
+
+        # 7) WEB so'rasa: SMS yuboramiz
+        await anyio.to_thread.run_sync(
+            SmsService.send_otp,
+            phone,
+            code,
+            # Agar SmsService message qabul qilsa:
+            # message
+        )
+
+        # 8) Production / Dev response
+        if settings.ENV.lower() == "production":
+            return {"status": "sent"}
+
+        return {"status": "sent", "code": code, "message": message}
+    # =====================================================
+    # VERIFY
+    # =====================================================
 
     async def _verify_otp(self, phone: str, code: str) -> bool:
+        now = datetime.now(timezone.utc)
+
         stmt = (
-            update(VerificationCode)
+            select(VerificationCode)
             .where(
                 VerificationCode.target == phone,
-                VerificationCode.code_hash == self._hash(code),
                 VerificationCode.is_used == False,
-                VerificationCode.expires_at > datetime.now(timezone.utc),
+                VerificationCode.expires_at > now,
             )
-            .values(is_used=True)
-            .returning(VerificationCode.id)
+            .with_for_update()
         )
-        result = await self.db.execute(stmt)
-        return result.scalar_one_or_none() is not None
 
-    async def authenticate_by_phone(self, phone: str, code: str, request: Request) -> PhoneAuthResponse:
+        record = (await self.db.execute(stmt)).scalar_one_or_none()
+
+        if not record:
+            return False
+
+        if record.failed_attempts >= self.OTP_MAX_ATTEMPTS:
+            return False
+
+        if not self._verify_hash(code, record.code_hash):
+            record.failed_attempts += 1
+            return False
+
+        record.is_used = True
+        return True
+
+    # =====================================================
+    # AUTHENTICATE
+    # =====================================================
+
+    async def authenticate_by_phone(
+        self,
+        phone: str,
+        code: str,
+        request: Request
+    ) -> PhoneAuthResponse:
+
         async with self.db.begin():
+
             if not await self._verify_otp(phone, code):
                 raise HTTPException(400, "Kod noto'g'ri yoki eskirgan")
 
             stmt = select(UserContact).where(
-                and_(UserContact.contact_type == ContactType.PHONE, UserContact.value == phone)
+                and_(
+                    UserContact.contact_type == ContactType.PHONE,
+                    UserContact.value == phone
+                )
             )
+
             contact = (await self.db.execute(stmt)).scalar_one_or_none()
 
             if not contact:
                 return PhoneAuthResponse(status="need_registration")
 
             user = await self._get_user_full(contact.user_id)
+
             tokens = await self._create_session_and_tokens(user, request)
-            return PhoneAuthResponse(status="success", token=tokens)
+
+            return PhoneAuthResponse(
+                status="success",
+                token=tokens
+            )
 
     # =====================================================
     # LOGOUT
