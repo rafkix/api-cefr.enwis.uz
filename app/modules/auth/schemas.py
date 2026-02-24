@@ -91,6 +91,8 @@ class IdentityResponse(BaseModel):
 class UserResponse(BaseModel):
     id: int
     is_active: bool
+    is_premium: bool
+    premium_expires_at: Optional[datetime] = None
     global_role: UserRole
     created_at: datetime
 

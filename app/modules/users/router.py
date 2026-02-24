@@ -43,6 +43,20 @@ async def update_my_profile(
     )
     
 
+@router.patch(
+    "/premium",
+    response_model=schemas.UserResponse
+)
+async def add_premium_subscription(
+    payload: schemas.PremiumSubscriptionUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    service: UserService = Depends(get_service)
+):
+    return await service.add_premium_subscription(
+        current_user.id,
+        payload.days
+    )
+
 @router.post(
     "/avatar",
     response_model=schemas.AvatarUpdateResponse

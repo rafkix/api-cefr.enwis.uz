@@ -128,19 +128,42 @@ async def list_user_exams(db: AsyncSession, user_id: int) -> List[dict]:
     } for e in exams]
 
 async def buy_exam_request(db: AsyncSession, user_id: int, exam_id: str):
+    exam = await db.get(MockExam, exam_id)
+    if not exam or not exam.is_active:
+        raise HTTPException(404, "Mock imtihon topilmadi")
+
     check_stmt = select(MockPurchase).where(
-        and_(MockPurchase.user_id == user_id, MockPurchase.mock_exam_id == exam_id)
+        and_(MockPurchase.user_id == user_id, MockPurchase.mock_exam_id == exam_id, MockPurchase.is_active == True)
     )
-    if (await db.execute(check_stmt)).scalar_one_or_none():
-        raise HTTPException(400, "Sizda ushbu imtihon uchun allaqachon so'rov mavjud.")
-    
-    purchase = MockPurchase(user_id=user_id, mock_exam_id=exam_id, is_active=False)
+    existing = (await db.execute(check_stmt)).scalar_one_or_none()
+    if existing:
+        return existing
+
+    purchase = MockPurchase(
+        user_id=user_id,
+        mock_exam_id=exam_id,
+        is_active=True,
+        comment=f"One-time payment confirmed: {exam.price}"
+    )
     db.add(purchase)
     await db.commit()
+    await db.refresh(purchase)
     return purchase
 
 # --- 4. EXAM PROCESS SERVICES ---
 async def start_exam(db: AsyncSession, user_id: int, exam_id: str) -> MockExamAttempt:
+    exam = await db.get(MockExam, exam_id)
+    if not exam or not exam.is_active:
+        raise HTTPException(404, "Imtihon topilmadi")
+
+    if exam.price > 0:
+        purchase_stmt = select(MockPurchase.id).where(
+            and_(MockPurchase.user_id == user_id, MockPurchase.mock_exam_id == exam_id, MockPurchase.is_active == True)
+        )
+        is_purchased = (await db.execute(purchase_stmt)).scalar_one_or_none()
+        if not is_purchased:
+            raise HTTPException(403, "Bu mock imtihon pullik. Avval bir martalik to'lov qiling.")
+
     # 1. Yangi urinishni (attempt) yaratish
     attempt = MockExamAttempt(user_id=user_id, mock_exam_id=exam_id)
     db.add(attempt)
@@ -216,14 +239,14 @@ async def submit_skill(db: AsyncSession, attempt_id: int, skill: SkillType, user
     # 3. Tegishli modul natijalar jadvalidan ballni tortib olish
     raw_score = 0.0
     if skill == SkillType.READING:
-        r_res = await db.execute(select(ReadingResult.score).where(
-            and_(ReadingResult.test_id == exam.reading_id, ReadingResult.user_id == user_id)
+        r_res = await db.execute(select(ReadingResult.raw_score).where(
+            and_(ReadingResult.test_id == exam.reading_id, ReadingResult.user_id == user_id, ReadingResult.exam_attempt_id == attempt_id)
         ).order_by(ReadingResult.created_at.desc()))
         raw_score = r_res.scalar_one_or_none() or 0.0
         
     elif skill == SkillType.LISTENING:
-        l_res = await db.execute(select(ListeningResult.score).where(
-            and_(ListeningResult.exam_id == exam.listening_id, ListeningResult.user_id == user_id)
+        l_res = await db.execute(select(ListeningResult.raw_score).where(
+            and_(ListeningResult.exam_id == exam.listening_id, ListeningResult.user_id == user_id, ListeningResult.exam_attempt_id == attempt_id)
         ).order_by(ListeningResult.created_at.desc()))
         raw_score = l_res.scalar_one_or_none() or 0.0
 
@@ -267,15 +290,15 @@ async def finish_exam_service(db: AsyncSession, attempt_id: int) -> MockExamResu
 
     # 2. Modullardan natijalarni yig'ish
     # Reading
-    r_stmt = select(ReadingResult.score).where(and_(ReadingResult.test_id == exam.reading_id, ReadingResult.user_id == user_id)).order_by(ReadingResult.created_at.desc())
+    r_stmt = select(ReadingResult.raw_score).where(and_(ReadingResult.test_id == exam.reading_id, ReadingResult.user_id == user_id, ReadingResult.exam_attempt_id == attempt.id)).order_by(ReadingResult.created_at.desc())
     reading_raw = (await db.execute(r_stmt)).scalar_one_or_none() or 0.0
 
     # Listening
-    l_stmt = select(ListeningResult.score).where(and_(ListeningResult.exam_id == exam.listening_id, ListeningResult.user_id == user_id)).order_by(ListeningResult.created_at.desc())
+    l_stmt = select(ListeningResult.raw_score).where(and_(ListeningResult.exam_id == exam.listening_id, ListeningResult.user_id == user_id, ListeningResult.exam_attempt_id == attempt.id)).order_by(ListeningResult.created_at.desc())
     listening_raw = (await db.execute(l_stmt)).scalar_one_or_none() or 0.0
 
     # Writing (WritingResult dan overall_score olinadi)
-    w_stmt = select(WritingResult.overall_score).where(and_(WritingResult.exam_id == exam.writing_id, WritingResult.user_id == user_id)).order_by(WritingResult.created_at.desc())
+    w_stmt = select(WritingResult.overall_score).where(and_(WritingResult.exam_id == exam.writing_id, WritingResult.user_id == user_id, WritingResult.exam_attempt_id == attempt.id)).order_by(WritingResult.created_at.desc())
     writing_score = (await db.execute(w_stmt)).scalar_one_or_none() or 0.0
 
     # 3. Scaled Ballar

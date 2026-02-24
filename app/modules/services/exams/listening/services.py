@@ -2,7 +2,7 @@ import logging
 from typing import List, Any, Tuple, Optional
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
@@ -14,6 +14,8 @@ from app.modules.services.exams.mock.models import (
     MockSkillAttempt,
     SkillType,
 )
+
+from app.modules.auth.models import User
 
 from .models import (
     ListeningExam, 
@@ -174,10 +176,28 @@ class ListeningService:
     # ================================================================
     #  RESULTS & SUBMISSION
     # ================================================================
+    async def _ensure_access(self, user_id: int, exam_attempt_id: Optional[int]):
+        if exam_attempt_id:
+            return
+
+        user = await self.db.get(User, user_id)
+        if user and getattr(user, "is_premium", False):
+            return
+
+        free_count_stmt = select(func.count(ListeningResult.id)).where(
+            ListeningResult.user_id == user_id,
+            ListeningResult.exam_attempt_id.is_(None),
+        )
+        free_count = (await self.db.execute(free_count_stmt)).scalar_one()
+        if free_count >= 10:
+            raise HTTPException(403, "Listening bo'limida 10 ta tekin urinish tugadi. Davom etish uchun Premium obuna kerak.")
+
     async def submit_exam_and_get_result(self, user_id: int, data: ListeningSubmission):
         exam = await self.get_exam_by_id(data.exam_id)
         if not exam:
             raise HTTPException(404, detail="Imtihon topilmadi")
+
+        await self._ensure_access(user_id=user_id, exam_attempt_id=data.exam_attempt_id)
         
         correct_count, total_q, review_items = 0, 0, []
         
@@ -285,7 +305,8 @@ class ListeningService:
         )
         skill = (await self.db.execute(stmt)).scalar_one_or_none()
         if skill:
-            skill.score = score
+            skill.raw_score = score
+            skill.scaled_score = score
             skill.cefr_level = cefr_level
             skill.is_checked = True
             skill.submitted_at = datetime.now(timezone.utc)
@@ -300,10 +321,10 @@ class ListeningService:
             # Skillarni map qilish
             s_map = {s.skill: s for s in skills}
             
-            overall = round((s_map[SkillType.READING].score + 
-                             s_map[SkillType.LISTENING].score + 
-                             s_map[SkillType.WRITING].score + 
-                             s_map[SkillType.SPEAKING].score) / 4, 2)
+            overall = round((s_map[SkillType.READING].scaled_score + 
+                             s_map[SkillType.LISTENING].scaled_score + 
+                             s_map[SkillType.WRITING].scaled_score + 
+                             s_map[SkillType.SPEAKING].scaled_score) / 4, 2)
             
             # CEFR Conversion based on Multilevel-bm.pdf Table 35
             final_cefr = "B1 dan quyi"
@@ -313,13 +334,13 @@ class ListeningService:
 
             self.db.add(MockExamResult(
                 attempt_id=exam_attempt_id,
-                reading_score=s_map[SkillType.READING].score,
-                listening_score=s_map[SkillType.LISTENING].score,
-                writing_score=s_map[SkillType.WRITING].score,
-                speaking_score=s_map[SkillType.SPEAKING].score,
+                user_id=s_map[SkillType.READING].user_id,
+                reading_ball=s_map[SkillType.READING].scaled_score,
+                listening_ball=s_map[SkillType.LISTENING].scaled_score,
+                writing_ball=s_map[SkillType.WRITING].scaled_score,
+                speaking_ball=s_map[SkillType.SPEAKING].scaled_score,
                 overall_score=overall,
                 cefr_level=final_cefr,
-                passed=overall >= 38, 
             ))
 
             attempt = await self.db.get(MockExamAttempt, exam_attempt_id)

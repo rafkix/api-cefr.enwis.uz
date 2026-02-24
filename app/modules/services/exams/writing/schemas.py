@@ -86,7 +86,7 @@ class AIEvaluationDetail(BaseModel):
 # --- USER SUBMISSION ---
 class WritingSubmission(BaseModel):
     exam_id: str = Field(..., alias="examId")
-    attempt_id: int = Field(..., alias="attemptId")
+    attempt_id: Optional[int] = Field(None, alias="attemptId")
     user_responses: Dict[str, str] = Field(..., alias="userResponses")
     model_config = ConfigDict(populate_by_name=True)
 

@@ -63,6 +63,8 @@ class IdentityResponse(BaseModel):
 class UserResponse(BaseModel):
     id: int
     is_active: bool
+    is_premium: bool
+    premium_expires_at: Optional[datetime] = None
     global_role: UserRole
     created_at: datetime
     updated_at: datetime
@@ -131,6 +133,10 @@ class ProfileUpdate(BaseModel):
         if v and not re.match(r"^[a-zA-Z0-9_]+$", v):
             raise ValueError("Username faqat harf, raqam va _ dan iborat bo‘lishi kerak")
         return v.lower() if v else v
+
+
+class PremiumSubscriptionUpdateRequest(BaseModel):
+    days: int = Field(..., gt=0, le=3650)
 
 class PasswordChangeRequest(BaseModel):
     old_password: str

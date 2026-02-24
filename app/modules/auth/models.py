@@ -82,6 +82,17 @@ class User(Base, TimestampMixin):
         nullable=False,
     )
 
+    is_premium: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+
+    premium_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
     global_role: Mapped[UserRole] = mapped_column(
         Enum(UserRole, native_enum=True),
         default=UserRole.USER,
