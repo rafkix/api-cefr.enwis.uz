@@ -6,105 +6,138 @@ import uuid
 from app.core.database import get_db
 from app.modules.auth.dependencies import get_current_user
 from app.modules.auth.models import User
-from app.modules.users.service import USERService  # Klas nomi service.py ichida qanday bo'lsa shunday yozing
+from app.modules.users.service import UserService
 from app.modules.users import schemas
 
-router = APIRouter(prefix="/user/me", tags=["My Profile"])
+router = APIRouter(
+    prefix="/users/me",
+    tags=["My Profile"]
+)
 
-# --- DEPENDENCY ---
+async def get_service(
+    db: AsyncSession = Depends(get_db)
+) -> UserService:
+    return UserService(db)
 
-async def get_service(db: AsyncSession = Depends(get_db)) -> USERService:
-    """UserService obyektini yaratish."""
-    return USERService(db)
-
-# --- SECTION: PROFILE ---
-
-@router.get("/", response_model=schemas.UserResponse)
-async def read_my_profile(user: User = Depends(get_current_user)):
-    """Profil ma'lumotlarini olish."""
-    return user
-
-@router.put("/profile", response_model=schemas.UserResponse)
-async def update_my_profile(
-    data: schemas.ProfileUpdate,
-    user: User = Depends(get_current_user),
-    service: USERService = Depends(get_service)
-):
-    """Profilni tahrirlash (ism, bio, va h.k.)."""
-    return await service.update_profile(user.id, data)
-
-@router.post("/avatar", response_model=schemas.AvatarUpdateResponse)
-async def upload_avatar(
-    file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
+@router.get(
+    "/",
+    response_model=schemas.UserResponse
+)
+async def read_my_profile(
     current_user: User = Depends(get_current_user)
 ):
-    """Profil rasmini yuklash (Avatar)."""
-    content_type = getattr(file, "content_type", None)
-    if not content_type or not content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Faqat rasm yuklash mumkin")
-    
-    service = USERService(db)
-    url = await service.upload_avatar(current_user.id, file)
-    return {"avatar_url": url, "message": "Avatar muvaffaqiyatli yuklandi"}
+    return current_user
 
-# --- SECTION: CONTACTS ---
-
-@router.post("/contacts_add")
-async def add_contact_start_api(
-    payload: schemas.AddContactSchema, 
-    user: User = Depends(get_current_user), 
-    service: USERService = Depends(get_service)
+@router.put(
+    "/profile",
+    response_model=schemas.UserResponse
+)
+async def update_my_profile(
+    payload: schemas.ProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    service: UserService = Depends(get_service)
 ):
-    """Kontakt qo'shishni boshlash (OTP kod yaratish)."""
-    return await service.add_contact_start(
-        user_id=user.id, 
-        value=payload.value, 
-        contact_type=payload.type
+    return await service.update_profile(
+        current_user.id,
+        payload
+    )
+    
+
+@router.post(
+    "/avatar",
+    response_model=schemas.AvatarUpdateResponse
+)
+async def upload_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    service: UserService = Depends(get_service)
+):
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(400, "Faqat rasm yuklash mumkin")
+
+    avatar_url = await service.upload_avatar(
+        current_user.id,
+        file
     )
 
-
-@router.get("/contacts", response_model=List[schemas.ContactResponse])
-async def read_my_contacts(
-    user: User = Depends(get_current_user),
-    service: USERService = Depends(get_service)
+    return schemas.AvatarUpdateResponse(
+        avatar_url=avatar_url
+    )
+    
+@router.get(
+    "/contacts",
+    response_model=List[schemas.ContactSchema]
+)
+async def get_my_contacts(
+    current_user: User = Depends(get_current_user),
+    service: UserService = Depends(get_service)
 ):
-    """Barcha kontaktlar ro'yxati."""
-    return await service.get_user_contacts(user.id)
+    return await service.get_user_contacts(current_user.id)
 
-@router.patch("/contacts/{contact_id}/primary")
-async def update_contact_primary_status(
+@router.post(
+    "/contacts"
+)
+async def add_contact(
+    payload: schemas.AddContactSchema,
+    current_user: User = Depends(get_current_user),
+    service: UserService = Depends(get_service)
+):
+    return await service.add_contact_start(
+        user_id=current_user.id,
+        value=payload.value,
+        contact_type=payload.contact_type
+    )
+    
+    
+@router.patch(
+    "/contacts/{contact_id}/primary"
+)
+async def set_primary_contact(
     contact_id: int,
-    user: User = Depends(get_current_user),
-    service: USERService = Depends(get_service)
+    current_user: User = Depends(get_current_user),
+    service: UserService = Depends(get_service)
 ):
-    """Kontaktni asosiy (primary) qilish."""
-    return await service.set_primary_contact(user.id, contact_id)
-
-@router.delete("/contacts/{contact_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_my_contact(
+    return await service.set_primary_contact(
+        current_user.id,
+        contact_id
+    )
+    
+@router.delete(
+    "/contacts/{contact_id}",
+    status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_contact(
     contact_id: int,
-    user: User = Depends(get_current_user),
-    service: USERService = Depends(get_service)
+    current_user: User = Depends(get_current_user),
+    service: UserService = Depends(get_service)
 ):
-    """Kontaktni o'chirish."""
-    await service.delete_contact(user.id, contact_id)
-
-# --- SECTION: SESSIONS ---
-
-@router.get("/sessions", response_model=List[schemas.UserSessionResponse])
-async def read_active_sessions(
-    user: User = Depends(get_current_user),
-    service: USERService = Depends(get_service)
+    await service.delete_contact(
+        current_user.id,
+        contact_id
+    )
+    
+@router.get(
+    "/sessions",
+    response_model=List[schemas.UserSessionResponse]
+)
+async def get_active_sessions(
+    current_user: User = Depends(get_current_user),
+    service: UserService = Depends(get_service)
 ):
-    """Faol qurilmalar ro'yxati."""
-    return await service.get_active_sessions(user.id)
-
-@router.delete("/sessions/{session_id}")
-async def delete_session(
+    return await service.get_active_sessions(
+        current_user.id
+    )
+    
+@router.delete(
+    "/sessions/{session_id}"
+)
+async def revoke_session(
     session_id: uuid.UUID,
-    user: User = Depends(get_current_user),
-    service: USERService = Depends(get_service)
+    current_user: User = Depends(get_current_user),
+    service: UserService = Depends(get_service)
 ):
-    """Sessiyani yopish."""
-    return await service.revoke_session(user.id, session_id)
+    return await service.revoke_session(
+        current_user.id,
+        session_id
+    )
+    

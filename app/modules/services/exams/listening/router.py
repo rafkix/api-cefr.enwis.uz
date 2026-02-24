@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 
 from app.core.database import get_db
-from app.modules.auth.dependencies import get_current_user, require_admin
+from app.modules.auth.dependencies import get_current_user, require_role
 from app.modules.auth.models import User
 
 # Servis va Sxemalar
@@ -27,7 +27,7 @@ router = APIRouter(
     "/create", 
     response_model=ListeningExamResponse, 
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_admin)]
+    dependencies=[Depends(require_role)]
 )
 async def create_listening_exam(
     data: ListeningExamCreate, 
@@ -58,7 +58,7 @@ async def get_listening_test(exam_id: str, db: AsyncSession = Depends(get_db)):
 @router.put(
     "/update/{exam_id}", 
     response_model=ListeningExamResponse,
-    dependencies=[Depends(require_admin)]
+    dependencies=[Depends(require_role)]
 )
 async def update_listening_exam(
     exam_id: str, 
@@ -73,7 +73,7 @@ async def update_listening_exam(
 @router.delete(
     "/delete/{exam_id}", 
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_admin)]
+    dependencies=[Depends(require_role)]
 )
 async def delete_listening_exam(
     exam_id: str, 

@@ -12,6 +12,7 @@ from app.modules.services.exams.mock.router import router as mock_router
 from app.modules.services.exams.reading.router import router as reading_router
 from app.modules.services.exams.listening.router import router as listening_router
 from app.modules.services.exams.writing.router import router as writing_router
+from app.modules.services.exams.writing.services.writing_service import WritingService
 
 app = FastAPI(
     title="Cefr Enwis Backend API",
@@ -24,8 +25,8 @@ app = FastAPI(
 
 
 origins = [
-    "http://localhost:2006",
-    "http://127.0.0.1:2006",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
     "https://enwis.uz",
     "https://app.enwis.uz",
     "https://api.enwis.uz",

@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 
 from app.core.database import get_db
-from app.modules.auth.dependencies import get_current_user, require_admin
+from app.modules.auth.dependencies import get_current_user, require_role
 from app.modules.auth.models import User
 
 # Service & Schemas
@@ -29,7 +29,7 @@ router = APIRouter(
     "/create",
     response_model=ReadingTestResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(require_role)],
 )
 async def create_reading_test(
     data: ReadingTestCreate,
@@ -77,7 +77,7 @@ async def get_reading_test(
 @router.put(
     "/update/{test_id}",
     response_model=ReadingTestResponse,
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(require_role)],
 )
 async def update_reading_test(
     test_id: str,
@@ -95,7 +95,7 @@ async def update_reading_test(
 @router.delete(
     "/delete/{test_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(require_role)],
 )
 async def delete_reading_test(
     test_id: str,

@@ -1,107 +1,234 @@
-from pydantic import BaseModel, Field, ConfigDict
-from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
-from enum import Enum
+from typing import List, Optional
+from pydantic import BaseModel, Field, model_validator, field_validator
 
-# --- ENUMS ---
-class WritingTaskType(str, Enum):
-    TASK_1_1_INFORMAL = "TASK_1_1_INFORMAL"
-    TASK_1_2_FORMAL = "TASK_1_2_FORMAL"
-    TASK_2_ESSAY = "TASK_2_ESSAY"
+from .models import (
+    CEFRLevel,
+    WritingStyle,
+    ScoringMode,
+    WritingCriterion,
+    FeedbackSource,
+)
 
-# --- TASK SCHEMAS ---
+
+# ==========================================================
+# BASE
+# ==========================================================
+
+class ORMModel(BaseModel):
+    model_config = {
+        "from_attributes": True,
+        "extra": "forbid",
+    }
+
+
+# ==========================================================
+# FORMAT
+# ==========================================================
+
+class WritingCriterionConfigRead(BaseModel):
+    criterion: WritingCriterion
+    weight: float
+
+
+class WritingCriterionWeightCreate(BaseModel):
+    criterion: WritingCriterion
+    weight: float = Field(..., gt=0, le=1)
+
+
+class WritingFormatBase(BaseModel):
+    name: str = Field(..., min_length=2, max_length=50)
+    cefr_level: CEFRLevel
+
+    min_words: int = Field(..., ge=1)
+    max_words: int = Field(..., ge=1)
+
+    style: WritingStyle
+    scoring_mode: ScoringMode
+    penalty_enabled: bool = False
+
+    @model_validator(mode="after")
+    def validate_words(self):
+        if self.min_words >= self.max_words:
+            raise ValueError("min_words must be < max_words")
+        return self
+
+
+class WritingFormatCreate(WritingFormatBase):
+    criterion_weights: List[WritingCriterionWeightCreate]
+
+    @model_validator(mode="after")
+    def validate_weights(self):
+        total = sum(c.weight for c in self.criterion_weights)
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError("Criterion weights must sum to 1.0")
+        return self
+
+
+class WritingFormatRead(ORMModel):
+    id: int
+    name: str
+    cefr_level: CEFRLevel
+    min_words: int
+    max_words: int
+    style: WritingStyle
+    scoring_mode: ScoringMode
+    penalty_enabled: bool
+    created_at: datetime
+    criterion_configs: List[WritingCriterionConfigRead]
+
+
+# ==========================================================
+# TASK
+# ==========================================================
+
 class WritingTaskBase(BaseModel):
-    part_number: int = Field(..., description="1 yoki 2-qism", alias="partNumber")
-    type: WritingTaskType
-    topic: str = Field(..., description="Savol matni")
-    instruction: str = Field(..., description="Yo'riqnoma")
-    context_text: Optional[str] = Field(None, description="Vaziyat tavsifi", alias="contextText")
-    min_words: int = Field(50, alias="minWords")
-    max_words: int = Field(200, alias="maxWords")
-    
-    model_config = ConfigDict(populate_by_name=True)
+    part_number: int = Field(..., ge=1)
+    sub_part: Optional[int] = Field(None, ge=1)
+
+    topic: str = Field(..., min_length=5)
+    instruction: str = Field(..., min_length=5)
+    context_text: Optional[str] = None
+
+    format_id: int
+
 
 class WritingTaskCreate(WritingTaskBase):
     pass
 
-class WritingTaskResponse(WritingTaskBase):
-    id: int
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
-    
-# --- EXAM SCHEMAS ---
-class WritingExamBase(BaseModel):
-    title: str
-    cefr_level: str = Field("Multilevel", alias="cefrLevel")
-    duration_minutes: int = Field(60, alias="durationMinutes")
-    is_demo: bool = Field(False, alias="isDemo")
-    is_free: bool = Field(False, alias="isFree")
-    is_mock: bool = Field(False, alias="isMock")
-    is_active: bool = Field(True, alias="isActive")
-    
-    model_config = ConfigDict(populate_by_name=True)
 
+class WritingTaskRead(ORMModel):
+    id: int
+    exam_id: str
+    part_number: int
+    sub_part: Optional[int]
+    topic: str
+    instruction: str
+    context_text: Optional[str]
+    created_at: datetime
+    format: WritingFormatRead
+
+
+# ==========================================================
+# EXAM
+# ==========================================================
+
+class WritingExamBase(BaseModel):
+    title: str = Field(..., min_length=3)
+    cefr_level: CEFRLevel
+    duration_minutes: int = Field(default=60, ge=10, le=240)
+
+    is_demo: bool = False
+    is_free: bool = False
+    is_mock: bool = False
+    is_active: bool = True
+
+
+# 🔥 CLIENT year/sequence_number yubormaydi
 class WritingExamCreate(WritingExamBase):
-    id: str = Field(..., description="Slug: writing-test-1")
     tasks: List[WritingTaskCreate]
 
+    @model_validator(mode="after")
+    def validate_unique_tasks(self):
+        seen = set()
+        for t in self.tasks:
+            key = (t.part_number, t.sub_part)
+            if key in seen:
+                raise ValueError("Duplicate task structure")
+            seen.add(key)
+        return self
+
+
 class WritingExamUpdate(BaseModel):
-    title: Optional[str] = None
-    cefr_level: Optional[str] = Field(None, alias="cefrLevel")
-    duration_minutes: Optional[int] = Field(None, alias="durationMinutes")
-    is_demo: Optional[bool] = Field(None, alias="isDemo")
-    is_free: Optional[bool] = Field(None, alias="isFree")
-    is_mock: Optional[bool] = Field(None, alias="isMock")
-    is_active: Optional[bool] = Field(None, alias="isActive")
+    model_config = {"extra": "forbid"}
+
+    title: Optional[str] = Field(None, min_length=3)
+    cefr_level: Optional[CEFRLevel] = None
+    duration_minutes: Optional[int] = Field(None, ge=10, le=240)
+
+    is_demo: Optional[bool] = None
+    is_free: Optional[bool] = None
+    is_mock: Optional[bool] = None
+    is_active: Optional[bool] = None
+
     tasks: Optional[List[WritingTaskCreate]] = None
 
-    model_config = ConfigDict(populate_by_name=True)
 
-class WritingExamResponse(WritingExamBase):
+class WritingExamRead(ORMModel):
     id: str
-    created_at: datetime = Field(..., alias="createdAt")
-    tasks: List[WritingTaskResponse]
-    
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
-    
-# --- AI EVALUATION DETAILS ---
-class AICriteriaScore(BaseModel):
-    task_achievement: float = Field(..., alias="taskAchievement")
-    grammar: float
-    vocabulary: float
-    coherence: float
-    mechanics: float
-    model_config = ConfigDict(populate_by_name=True)
-    
+    year: int
+    sequence_number: int
+    title: str
+    cefr_level: CEFRLevel
+    duration_minutes: int
+    is_demo: bool
+    is_free: bool
+    is_mock: bool
+    is_active: bool
+    created_at: datetime
+    tasks: List[WritingTaskRead]
 
-class AIEvaluationDetail(BaseModel):
-    score: float
-    word_count: int = Field(..., alias="wordCount")
-    feedback: str
-    criteria: AICriteriaScore
-    # Union[List[str], str] orqali xatolikni oldini olamiz
-    suggestions: Union[List[str], str] 
-    
-    model_config = ConfigDict(populate_by_name=True)
 
-# --- USER SUBMISSION ---
-class WritingSubmission(BaseModel):
-    exam_id: str = Field(..., alias="examId")
-    attempt_id: int = Field(..., alias="attemptId")
-    user_responses: Dict[str, str] = Field(..., alias="userResponses")
-    model_config = ConfigDict(populate_by_name=True)
+# ==========================================================
+# SUBMISSION
+# ==========================================================
 
-# --- RESULT RESPONSE ---
-class WritingResultResponse(BaseModel):
+class WritingAnswerSubmit(BaseModel):
+    task_id: int
+    content: str = Field(..., min_length=10)
+
+    @field_validator("content")
+    @classmethod
+    def strip_text(cls, v: str):
+        v = v.strip()
+        if not v:
+            raise ValueError("Content cannot be empty")
+        return v
+
+
+class WritingSubmitRequest(BaseModel):
+    answers: List[WritingAnswerSubmit]
+
+
+# ==========================================================
+# RESULT / SCORE
+# ==========================================================
+
+class WritingScoreRead(ORMModel):
     id: int
-    user_id: int = Field(serialization_alias="userId")
-    exam_id: str = Field(serialization_alias="examId")
-    overall_score: float = Field(serialization_alias="overallScore")
-    raw_score: float = Field(serialization_alias="rawScore")
-    
-    # evaluations lug'atida endi task1.1, task1.2 va task2 kalitlari bo'ladi
-    evaluations: Dict[str, AIEvaluationDetail] = Field(validation_alias="ai_evaluation")
-    user_responses: Dict[str, str] = Field(validation_alias="user_responses", serialization_alias="userResponses")
-    
-    created_at: datetime = Field(serialization_alias="createdAt")
+    criterion: WritingCriterion
+    score: float
+    created_at: datetime
 
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+class WritingFeedbackRead(ORMModel):
+    id: int
+    source: FeedbackSource
+    model_name: Optional[str]
+    content: str
+    created_at: datetime
+
+
+class WritingAnswerResultRead(ORMModel):
+    id: int
+    task_id: int
+    content: str
+    word_count: int
+    penalty: float
+    raw_score: Optional[float]
+    scaled_score: Optional[float]
+    created_at: datetime
+    scores: List[WritingScoreRead]
+    feedbacks: List[WritingFeedbackRead]
+
+
+class WritingResultRead(ORMModel):
+    id: int
+    user_id: int
+    exam_id: str
+    raw_score: Optional[float]
+    scaled_score: Optional[float]
+    cefr_level: Optional[CEFRLevel]
+    is_finalized: bool
+    created_at: datetime
+    answers: List[WritingAnswerResultRead]

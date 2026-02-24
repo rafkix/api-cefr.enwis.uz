@@ -30,7 +30,7 @@ async def get_current_user(
     # 2. AuthService orqali foydalanuvchini barcha bog'liqliklari bilan olish
     service = AuthService(db)
     try:
-        user = await service._get_full_user(int(user_id))
+        user = await service._get_user_full(int(user_id))
     except HTTPException:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -39,13 +39,13 @@ async def get_current_user(
         )
     return user
 
-async def require_admin(current_user: User = Depends(get_current_user)):
-    """
-    Faqat ADMIN huquqiga ega foydalanuvchilarni o'tkazadi.
-    """
-    if current_user.global_role != UserRole.ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Ushbu amalni bajarish uchun sizda yetarli huquqlar mavjud emas (Faqat Admin)."
-        )
-    return current_user
+def require_role(*allowed_roles: UserRole):
+    def role_checker(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.global_role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions",
+            )
+        return current_user
+
+    return role_checker

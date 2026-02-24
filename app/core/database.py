@@ -1,21 +1,36 @@
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.ext.asyncio import (
+    create_async_engine,
+    AsyncSession,
+    async_sessionmaker,
+)
+from sqlalchemy.orm import declarative_base
 
 DATABASE_URL = "sqlite+aiosqlite:///./enwis.db"
 
 engine = create_async_engine(
     DATABASE_URL,
-    pool_size=20,          # Doimiy ochiq ulanishlar
-    max_overflow=50,       # Zarurat bo'lganda qo'shimcha ochiladigan ulanishlar
-    pool_timeout=30,       # Navbat kutish vaqti
-    pool_recycle=1800      # 30 minutda ulanishni yangilash
+    echo=False,
+    future=True,
 )
-AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False) # type: ignore
+
+AsyncSessionLocal = async_sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
+
 Base = declarative_base()
 
-async def get_db():
-    async with AsyncSessionLocal() as session: # type: ignore
-        yield session
+
+async def get_db() -> AsyncSession:
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
 
 async def init_db():
     async with engine.begin() as conn:

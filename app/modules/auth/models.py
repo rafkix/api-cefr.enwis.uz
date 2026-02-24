@@ -4,173 +4,347 @@ from enum import Enum as PyEnum
 from typing import List, Optional
 
 from sqlalchemy import (
-    BigInteger, Boolean, DateTime, Enum, ForeignKey, Integer,
-    String, Text, UniqueConstraint, func, Index)
+    BigInteger,
+    Boolean,
+    Date,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Index,
+    func,
+    text,
+)
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-# Base ni markaziy joydan olamiz
 from app.core.database import Base
 
+
+# =========================
+# Mixins
+# =========================
+
 class TimestampMixin:
-    """Barcha jadvallarga created_at va updated_at qo'shish uchun mixin."""
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), 
-        server_default=func.now(), 
-        onupdate=func.now()
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
+
+# =========================
+# Enums
+# =========================
+
 class AuthProvider(str, PyEnum):
-    LOCAL = "local"
     GOOGLE = "google"
     TELEGRAM = "telegram"
-    ONE_ID = "one_id"
+
+
+class ContactType(str, PyEnum):
+    EMAIL = "email"
+    PHONE = "phone"
+    TELEGRAM = "telegram"
+
 
 class UserRole(str, PyEnum):
     USER = "user"
     ADMIN = "admin"
-    DEVELOPER = "developer"
+    TEACHER = "teacher"
 
-class VerificationPurpose(str, PyEnum):
-    REGISTER = "register"
-    RESET_PASSWORD = "reset_password"
-    VERIFY_EMAIL = "verify_email"
-    VERIFY_PHONE = "verify_phone"
-    LOGIN = "login"
-    ADD_CONTACT = "add_contact"
+
+# =========================
+# Models
+# =========================
 
 class User(Base, TimestampMixin):
-    """
-    Foydalanuvchining asosiy modeli.
-    """
     __tablename__ = "users"
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, index=True, autoincrement=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    global_role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.USER)
 
-    # FAQAT BIR MARTA VA TO'LIQ YO'L BILAN YOZAMIZ:
-    profile: Mapped["UserProfile"] = relationship(
-        "app.modules.auth.models.UserProfile", 
-        back_populates="user", 
-        uselist=False, 
-        cascade="all, delete-orphan", 
-        lazy="selectin"
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=False,  # Agar Snowflake yoki custom ID ishlatsangiz
     )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+    )
+
+    global_role: Mapped[UserRole] = mapped_column(
+        Enum(UserRole, native_enum=True),
+        default=UserRole.USER,
+        nullable=False,
+    )
+    
+    profile: Mapped[Optional["UserProfile"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+    # Relationships
     identities: Mapped[List["UserIdentity"]] = relationship(
-        "app.modules.auth.models.UserIdentity", 
-        back_populates="user", 
-        cascade="all, delete-orphan", 
-        lazy="selectin"
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="selectin",
     )
+
     contacts: Mapped[List["UserContact"]] = relationship(
-        "app.modules.auth.models.UserContact", 
-        back_populates="user", 
-        cascade="all, delete-orphan", 
-        lazy="selectin"
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="selectin",
     )
+
     sessions: Mapped[List["UserSession"]] = relationship(
-        "app.modules.auth.models.UserSession", 
-        back_populates="user", 
-        cascade="all, delete-orphan"
+        back_populates="user",
+        cascade="all, delete-orphan",
     )
-
-    @property
-    def email(self) -> Optional[str]:
-        return next((c.value for c in self.contacts if c.contact_type == "email" and c.is_primary), None)
-
-    @property
-    def phone(self) -> Optional[str]:
-        return next((c.value for c in self.contacts if c.contact_type == "phone" and c.is_primary), None)
-
 
 class UserProfile(Base, TimestampMixin):
-    """Foydalanuvchining shaxsiy ma'lumotlari."""
     __tablename__ = "user_profiles"
 
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    
-    full_name: Mapped[str] = mapped_column(String(255))
-    username: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    avatar_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    bio: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    
-    birth_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    gender: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    
-    user: Mapped["User"] = relationship("User", back_populates="profile")
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
 
+    full_name: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+    username: Mapped[Optional[str]] = mapped_column(String(50), unique=True, nullable=True)
+
+    avatar_url: Mapped[Optional[str]] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    bio: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    birth_date: Mapped[Optional[datetime]] = mapped_column(
+        Date,
+        nullable=True,
+    )
+
+    language: Mapped[Optional[str]] = mapped_column(
+        String(10),
+        nullable=True,
+    )
+
+    timezone: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
+    user: Mapped["User"] = relationship(
+        back_populates="profile",
+        uselist=False,
+    )
+
+# =========================
+# OAuth / Social identities
+# =========================
 
 class UserIdentity(Base, TimestampMixin):
-    """Auth provayderlar (Local, Google, Telegram) bilan bog'lanish."""
+    """
+    Google yoki Telegram identity.
+    provider_id = google_sub yoki telegram_user_id
+    """
+
     __tablename__ = "user_identities"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    
-    provider: Mapped[AuthProvider] = mapped_column(Enum(AuthProvider))
-    provider_id: Mapped[str] = mapped_column(String, index=True) # Email yoki Social ID
-    password_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    
-    # Bitta provayderda bitta ID faqat bir marta bo'lishi shart
-    __table_args__ = (UniqueConstraint("provider", "provider_id", name="_provider_id_uc"),)
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+    )
 
-    user: Mapped["User"] = relationship("User", back_populates="identities")
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
+    provider: Mapped[AuthProvider] = mapped_column(
+        Enum(AuthProvider, native_enum=True),
+        nullable=False,
+    )
+
+    provider_id: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        index=True,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "provider_id",
+            name="uq_provider_provider_id",
+        ),
+    )
+
+    user: Mapped["User"] = relationship(
+        back_populates="identities",
+    )
+
+
+# =========================
+# Contacts (Phone / Email)
+# =========================
 
 class UserContact(Base, TimestampMixin):
-    """Foydalanuvchining aloqa vositalari."""
+    """
+    Phone login uchun ham ishlatiladi.
+    contact_type + value global unique.
+    """
+
     __tablename__ = "user_contacts"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    
-    contact_type: Mapped[str] = mapped_column(String(20)) # email, phone, telegram
-    value: Mapped[str] = mapped_column(String(255), index=True)
-    
-    is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
-    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+    )
 
-    user: Mapped["User"] = relationship("User", back_populates="contacts")
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
+    contact_type: Mapped[ContactType] = mapped_column(
+        Enum(ContactType, native_enum=True),
+        nullable=False,
+    )
+
+    value: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    is_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+
+    is_primary: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "contact_type",
+            "value",
+            name="uq_contact_type_value",
+        ),
+
+        # PostgreSQL partial unique index:
+        Index(
+            "uq_user_primary_contact",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_primary = true"),
+        ),
+    )
+
+    user: Mapped["User"] = relationship(
+        back_populates="contacts",
+    )
+
+
+# =========================
+# Refresh Sessions
+# =========================
 
 class UserSession(Base, TimestampMixin):
     """
-    Refresh Token sessiyalari. 
-    Domain-locking va Xavfsizlik uchun ishlatiladi.
+    Refresh token storage.
+    refresh_token_hash saqlanadi (SHA256).
     """
+
     __tablename__ = "user_sessions"
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    
-    # SHA256 bilan xeshlanadi
-    refresh_token_hash: Mapped[str] = mapped_column(String, index=True)
-    
-    user_agent: Mapped[Optional[str]] = mapped_column(String)
-    ip_address: Mapped[Optional[str]] = mapped_column(String(50))
-    
-    # Refresh token amal qilish muddati
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    is_revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
 
-    user: Mapped["User"] = relationship("User", back_populates="sessions")
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
+    refresh_token_hash: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        index=True,
+    )
+
+    user_agent: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    ip_address: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        index=True,
+    )
+
+    is_revoked: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index(
+            "idx_user_active_sessions",
+            "user_id",
+            "is_revoked",
+        ),
+    )
+
+    user: Mapped["User"] = relationship(
+        back_populates="sessions",
+    )
 
 class VerificationCode(Base, TimestampMixin):
-    """SMS yoki Email kodlarni tasdiqlash uchun."""
     __tablename__ = "verification_codes"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
-    
-    target: Mapped[str] = mapped_column(String, index=True) # email/phone
-    code: Mapped[str] = mapped_column(String(10))
-    purpose: Mapped[VerificationPurpose] = mapped_column(Enum(VerificationPurpose))
-    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    target: Mapped[str] = mapped_column(String(255), index=True)
+    code_hash: Mapped[str] = mapped_column(String(128))
+    failed_attempts = mapped_column(Integer, default=0)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     is_used: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    # Tezkor qidirish uchun kompozit indeks
-    __table_args__ = (Index("idx_target_code_active", "target", "code", "is_used"),)
+    __table_args__ = (
+        Index("idx_active_code", "target", "is_used"),
+    )
