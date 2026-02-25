@@ -1,0 +1,15 @@
+# runtime
+*.db
+*.sqlite3
+enwis.db
+
+# venv
+venv/
+
+# uploads
+static/avatars/
+
+# sessions/secrets
+sessions/
+*.session
+.env
