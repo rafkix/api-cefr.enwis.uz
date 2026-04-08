@@ -1,122 +1,137 @@
-import re
-import requests
-import random
+import logging
 import os
+import re
 from datetime import datetime, timedelta
+from typing import Optional
+
+import requests
+
+
+logger = logging.getLogger(__name__)
 
 
 class SmsService:
-    LOGIN_EMAIL = os.environ.get("ESKIZ_EMAIL", "kholikulovelyor@gmail.com")
-    LOGIN_PASSWORD = os.environ.get("ESKIZ_PASSWORD", "lWMS8DpghTyKoxHalY8Rvi8OocKFLxYx4pWBSL9f")
-
     LOGIN_URL = "https://notify.eskiz.uz/api/auth/login"
     SMS_URL = "https://notify.eskiz.uz/api/message/sms/send"
 
-    FROM = "4546"   # Agar ishlamasa dashboarddan tekshir
+    FROM = os.environ.get("ESKIZ_FROM", "4546")
 
-    _token = None
-    _token_expires_at = None
+    _token: Optional[str] = None
+    _token_expires_at: Optional[datetime] = None
 
-    # =====================================================
-    # OTP GENERATION
-    # =====================================================
+    @classmethod
+    def _get_credentials(cls) -> tuple[str, str]:
+        email = os.environ.get("ESKIZ_EMAIL")
+        password = os.environ.get("ESKIZ_PASSWORD")
+
+        if not email or not password:
+            raise RuntimeError("ESKIZ_EMAIL yoki ESKIZ_PASSWORD topilmadi")
+
+        return email, password
 
     @staticmethod
-    def _generate_otp():
-        return str(random.randint(100000, 999999))
+    def normalize_phone(phone: str) -> str:
+        value = str(phone).strip()
 
-    # =====================================================
-    # TOKEN
-    # =====================================================
+        if value.startswith("+"):
+            value = value[1:]
 
-    @classmethod
-    def _get_token(cls):
+        value = re.sub(r"\D", "", value)
 
-        if cls._token and cls._token_expires_at and cls._token_expires_at > datetime.utcnow():
-            return cls._token
-
-        response = requests.post(
-            cls.LOGIN_URL,
-            data={
-                "email": cls.LOGIN_EMAIL,
-                "password": cls.LOGIN_PASSWORD,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=10,
-        )
-
-        print("LOGIN STATUS:", response.status_code)
-        print("LOGIN RESPONSE:", response.text)
-
-        response.raise_for_status()
-
-        data = response.json()
-
-        token = data.get("data", {}).get("token")
-
-        if not token:
-            raise Exception("Token topilmadi")
-
-        cls._token = token
-        cls._token_expires_at = datetime.utcnow() + timedelta(hours=23)
-
-        print("✅ Token yangilandi")
-
-        return cls._token
-
-    # =====================================================
-    # SEND OTP
-    # =====================================================
-
-    @classmethod
-    def send_otp(cls, phone: str, otp: str):
-
-        # telefonni normalize qilish
-        phone = str(phone).strip()
-
-        # + ni olib tashlash
-        if phone.startswith("+"):
-            phone = phone[1:]
-
-        # probel, tire va boshqa belgilarni o‘chirish
-        phone = re.sub(r"\D", "", phone)
-
-        # validation
-        if not phone.startswith("998") or len(phone) != 12:
+        if not value.startswith("998") or len(value) != 12:
             raise ValueError("Telefon formati noto‘g‘ri. Masalan: 998901234567")
 
-        token = cls._get_token()
-        sender = 'Healthy project'
+        return value
 
-        message = f"""NarxNav sayti orqali ro\'yxatdan o\'tish uchun tasdiqlash kodingiz: {otp}"""
+    @classmethod
+    def _get_token(cls) -> str:
+        now = datetime.utcnow()
 
-        # 160 belgidan oshmasin
+        if cls._token and cls._token_expires_at and cls._token_expires_at > now:
+            return cls._token
+
+        email, password = cls._get_credentials()
+
+        try:
+            response = requests.post(
+                cls.LOGIN_URL,
+                data={
+                    "email": email,
+                    "password": password,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=10,
+            )
+            response.raise_for_status()
+        except requests.RequestException as e:
+            logger.exception("Eskiz login request failed")
+            raise RuntimeError("SMS provider auth xatosi") from e
+
+        try:
+            data = response.json()
+        except ValueError as e:
+            logger.exception("Eskiz login response is not valid JSON")
+            raise RuntimeError("SMS provider noto‘g‘ri javob qaytardi") from e
+
+        token = data.get("data", {}).get("token")
+        if not token:
+            logger.error("Eskiz token not found in response: %s", data)
+            raise RuntimeError("SMS provider token qaytarmadi")
+
+        cls._token = token
+        cls._token_expires_at = now + timedelta(hours=23)
+
+        logger.info("Eskiz token refreshed")
+        return token
+
+    @classmethod
+    def send_sms(cls, phone: str, message: str) -> dict:
+        normalized_phone = cls.normalize_phone(phone)
+
+        if not message or not message.strip():
+            raise ValueError("SMS matni bo‘sh bo‘lishi mumkin emas")
+
+        message = message.strip()
+
         if len(message) > 160:
-            raise ValueError("SMS 160 belgidan oshdi")
+            raise ValueError("SMS 160 belgidan oshmasligi kerak")
+
+        token = cls._get_token()
 
         payload = {
-            "mobile_phone": phone,
+            "mobile_phone": normalized_phone,
             "message": message,
-            "from": "4546",
+            "from": cls.FROM,
         }
 
         headers = {
             "Authorization": f"Bearer {token}",
         }
 
-        response = requests.post(
-            cls.SMS_URL,
-            json=payload,
-            headers=headers,
-            timeout=10,
-        )
+        try:
+            response = requests.post(
+                cls.SMS_URL,
+                json=payload,
+                headers=headers,
+                timeout=10,
+            )
+            response.raise_for_status()
+        except requests.RequestException as e:
+            logger.exception("Eskiz SMS send request failed")
+            raise RuntimeError("SMS yuborishda xatolik yuz berdi") from e
 
-        print("SMS STATUS:", response.status_code)
-        print("SMS RESPONSE:", response.text)
+        try:
+            data = response.json()
+        except ValueError as e:
+            logger.exception("Eskiz SMS response is not valid JSON")
+            raise RuntimeError("SMS provider noto‘g‘ri javob qaytardi") from e
 
-        if response.status_code != 200:
-            raise Exception(f"SMS xato: {response.text}")
+        # Provider contractga qarab bu checkni keyin aniqroq qilasan
+        # Hozir hech bo‘lmasa JSON body'ni qaytaramiz/loglaymiz.
+        logger.info("SMS sent to %s", normalized_phone)
+        return data
 
-        print(f"✅ OTP {otp} yuborildi → {phone}")
-
-        return otp
+    @classmethod
+    def send_otp(cls, phone: str, otp: str) -> dict:
+        message = f"NarxNav sayti orqali ro\'yxatdan o\'tish uchun tasdiqlash kodingiz: {otp}"
+        return cls.send_sms(phone=phone, message=message)

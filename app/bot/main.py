@@ -1,28 +1,29 @@
 import asyncio
-import sys
-import os
+import logging
+
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-# Root yo'lini sozlash
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+from app.bot.handlers import setup_routers
 
-from app.core.config import settings
-from app.bot.handlers import common, auth, admin
+BOT_TOKEN = "8508519884:AAGA3wsCduuF9SQDa8mvO8d9c_PnHDJQ_fg"
+
+logging.basicConfig(level=logging.INFO)
+
 
 async def main():
-    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN, 
-             default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = Bot(
+        token=BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
     dp = Dispatcher()
 
-    # Routerlarni ulash
-    dp.include_router(common.router)
-    dp.include_router(auth.router)
-    dp.include_router(admin.router)
+    dp.include_router(setup_routers())
 
-    print("🚀 Bot ishga tushdi...")
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

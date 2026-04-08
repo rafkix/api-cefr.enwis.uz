@@ -1,25 +1,61 @@
 import random
+import re
+from hashlib import sha256
+from typing import Optional
+
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 
-REQUIRED_CHANNEL = "@enwis_uz"
-ADMINS = [7281495879, 6813390517]
+# Shu qiymatlarni configdan olganing yaxshi
+REQUIRED_CHANNELS = [
+    "@enwis_uz",
+]
 
-async def check_subscription(bot: Bot, user_id: int) -> bool:
-    try:
-        member = await bot.get_chat_member(chat_id=REQUIRED_CHANNEL, user_id=user_id)
-        return member.status in ["creator", "administrator", "member"]
-    except Exception:
-        return False
+ADMIN_IDS = {
+    7281495879,  # o'zingning telegram id'ing
+}
+
 
 def normalize_phone(phone: str) -> str:
-    cleaned = "".join(filter(str.isdigit, phone))
-    if cleaned.startswith("8"): cleaned = "998" + cleaned[1:]
-    if not cleaned.startswith("998") and len(cleaned) == 9:
-        cleaned = "998" + cleaned
-    return f"+{cleaned}"
+    """
+    Telefon raqamni yagona formatga keltiradi.
+    Natija: 998XXXXXXXXX
+    """
+    digits = re.sub(r"\D", "", phone or "")
 
-def generate_otp() -> str:
-    return "".join([str(random.randint(0, 9)) for _ in range(6)])
+    if digits.startswith("998") and len(digits) == 12:
+        return digits
+
+    if digits.startswith("8") and len(digits) == 9:
+        return f"998{digits}"
+
+    if len(digits) == 9:
+        return f"998{digits}"
+
+    return digits
+
+
+def generate_otp(length: int = 6) -> str:
+    return "".join(random.choices("0123456789", k=length))
+
+
+def hash_code(code: str) -> str:
+    return sha256(code.encode("utf-8")).hexdigest()
+
+
+async def check_subscription(bot: Bot, user_id: int) -> bool:
+    """
+    Foydalanuvchi barcha required kanallarga a'zo ekanini tekshiradi.
+    """
+    for channel in REQUIRED_CHANNELS:
+        try:
+            member = await bot.get_chat_member(channel, user_id)
+            if member.status not in ("member", "administrator", "creator"):
+                return False
+        except TelegramBadRequest:
+            return False
+    return True
+
 
 async def is_admin(user_id: int) -> bool:
-    return user_id in ADMINS
+    return user_id in ADMIN_IDS

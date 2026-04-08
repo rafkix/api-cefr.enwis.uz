@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     AUDIENCE: str = "enwis_auth"
     
-    TELEGRAM_BOT_TOKEN: Optional[str] = None
+    TELEGRAM_BOT_TOKEN: str = "8508519884:AAGA3wsCduuF9SQDa8mvO8d9c_PnHDJQ_fg"
     TELEGRAM_BOT_USERNAME: str = "EnwisAuthBot"
     ESKIZ_EMAIL: str = "kholikulovelyor@gmail.com"
     ESKIZ_PASSWORD: str = "lWMS8DpghTyKoxHalY8Rvi8OocKFLxYx4pWBSL9f"
