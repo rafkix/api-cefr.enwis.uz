@@ -72,7 +72,12 @@ class AuthService:
     # TOKEN & SESSION
     # =====================================================
 
-    async def _create_session_and_tokens(self, user: User, request: Request) -> Token:
+    async def _create_session_and_tokens(
+        self,
+        user: User,
+        request: Request,
+        family_id: Optional[str] = None,
+    ) -> Token:
         access_token = create_access_token(
             user_id=user.id,
             extra_data={"role": user.global_role.value},
@@ -459,7 +464,7 @@ class AuthService:
         session = UserSession(
             user_id=user.id,
             refresh_token_hash=refresh_hash,
-            session_family_id=session_family_id or uuid.uuid4(),  # 🔥
+            family_id=user.session_family_id,  # 🔥 TO‘G‘RI
             user_agent=request.headers.get("user-agent"),
             ip_address=request.client.host if request.client else None,
             expires_at=datetime.now(timezone.utc)

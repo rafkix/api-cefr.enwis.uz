@@ -30,6 +30,7 @@ origins = [
     "https://app.enwis.uz",
     "https://api.enwis.uz",
     "https://cefr.enwis.uz",
+    "https://auth.enwis.uz"
 ]
 
 if not os.path.exists("static"):
